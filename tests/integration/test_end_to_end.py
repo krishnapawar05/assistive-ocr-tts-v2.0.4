@@ -19,6 +19,7 @@ from core.tts.base import TTSErrorCode
 from core.tts.service import TTSService
 from tests.helpers import FakeOCRAdapter, RecordingTTS, default_config, make_config, no_network
 from tests.ocr import engine_case  # noqa: F401  (sets offline env)
+from core.ocr.service import build_adapters
 from tests.ocr.engine_case import FIXTURES, MANIFEST, load_adapter
 
 
@@ -37,10 +38,18 @@ def base_cfg():
     return cfg
 
 
+def lazy_adapters(ocr_cfg, **overrides):
+    """Real adapters: the cached, already-loaded EasyOCR plus fresh unloaded ones for the other
+    engines, which OCRService loads only if a frame reaches them (as the app does with
+    ocr.preload="primary"). Loading every engine up front exhausts RAM on 8 GB machines."""
+    fresh = build_adapters(ocr_cfg, "en")
+    fresh["easyocr"] = load_adapter("easyocr")
+    fresh.update(overrides)
+    return fresh
+
+
 def real_ocr(cfg):
-    adapters = {n: load_adapter(n) for n in ("tesseract", "easyocr", "paddle", "trocr")}
-    svc = OCRService(cfg["ocr"], cfg["text"], adapters=adapters)
-    return svc
+    return OCRService(cfg["ocr"], cfg["text"], adapters=lazy_adapters(cfg["ocr"]))
 
 
 def recording_tts(cfg, *adapters):
@@ -63,6 +72,9 @@ class EndToEndTest(unittest.TestCase):
     def tearDown(self):
         for p in self.pipelines:
             p.shutdown()
+        # unittest keeps every TestCase alive until the run ends; drop the pipelines (and their
+        # models) now so they don't accumulate across tests.
+        self.pipelines.clear()
         self.tmp.cleanup()
 
     def pipeline(self, cfg, frames=None, ocr=None, tts=None, **cam_kw):
@@ -146,11 +158,7 @@ class EndToEndTest(unittest.TestCase):
         cfg["ocr"].update(mode="fallback", engine=broken,
                           fallback_order=[e for e in ("easyocr", "paddle") if e != broken])
         breaker(cfg["ocr"]["engines"][broken])
-        adapters = {}
-        from core.ocr.service import build_adapters
-        fresh = build_adapters(cfg["ocr"], "en")
-        for name in ("tesseract", "easyocr", "paddle", "trocr"):
-            adapters[name] = fresh[name] if name == broken else load_adapter(name)
+        adapters = lazy_adapters(cfg["ocr"], **{broken: build_adapters(cfg["ocr"], "en")[broken]})
         ocr = OCRService(cfg["ocr"], cfg["text"], adapters=adapters)
         tts = recording_tts(cfg)
         p = self.pipeline(cfg, ocr=ocr, tts=tts)
