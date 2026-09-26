@@ -42,8 +42,9 @@ TOTAL_TIMEOUT_S = 25 * 60.0
 REPEATS = 3
 FIXTURES = ["room_204", "sentence", "greenboard", "blank"]
 TROCR_EXTRA = ["hand_meet"]
-MEMORY_FLOOR_GB = 0.25          # kill the child if available RAM stays below this ...
-MEMORY_FLOOR_GRACE_S = 3.0      # ... for this long
+MEMORY_FLOOR_GB = 0.3           # kill the child if available RAM stays below this ...
+MEMORY_FLOOR_GRACE_S = 1.0      # ... for this long
+MONITOR_INTERVAL_S = 0.25
 GB = 1e9
 
 # (stage id, minimum available RAM in GB to start it)
@@ -298,19 +299,21 @@ def run_child(stage: str, deadline_s: float, log_path: str, run_log) -> dict:
     peak_rss, cpu_samples, min_avail = 0.0, [], available_gb()
     below_since = None
     result = "COMPLETED"
-    primed = set()
+    known = {}  # pid -> psutil.Process; cpu_percent() needs the same object across calls
     while popen.poll() is None:
         try:
-            tree = [root] + root.children(recursive=True)
-            rss = sum(p.memory_info().rss for p in tree) / 1e6
-            cpu = 0.0
-            for p in tree:
-                if p.pid not in primed:
-                    p.cpu_percent(None)
-                    primed.add(p.pid)
-                else:
+            for p in [root] + root.children(recursive=True):
+                if p.pid not in known:
+                    known[p.pid] = p
+                    p.cpu_percent(None)  # prime
+            rss, cpu = 0.0, 0.0
+            for pid, p in list(known.items()):
+                try:
+                    rss += p.memory_info().rss
                     cpu += p.cpu_percent(None)
-            peak_rss = max(peak_rss, rss)
+                except psutil.NoSuchProcess:
+                    known.pop(pid)
+            peak_rss = max(peak_rss, rss / 1e6)
             cpu_samples.append(cpu)
         except psutil.NoSuchProcess:
             pass
@@ -330,13 +333,13 @@ def run_child(stage: str, deadline_s: float, log_path: str, run_log) -> dict:
             print(f"!! {stage}: exceeded {deadline_s:.0f}s -> killing", flush=True)
             kill_tree(root)
             break
-        time.sleep(0.5)
+        time.sleep(MONITOR_INTERVAL_S)
     popen.wait(timeout=30)
     reader.join(timeout=5)
     if result == "COMPLETED" and popen.returncode not in (0,):
         result = "ABORTED" if popen.returncode == 3 else f"CRASHED(exit {popen.returncode})"
     return {"result": result, "wall_s": round(time.monotonic() - t0, 1), "peak_rss_mb": round(peak_rss, 1),
-            "cpu_percent_median": round(statistics.median(cpu_samples), 1) if cpu_samples else None,
+            "cpu_percent_median": round(statistics.median(cpu_samples[1:]), 1) if len(cpu_samples) > 1 else None,
             "min_available_gb": round(min_avail, 2), "exit_code": popen.returncode}
 
 
@@ -395,8 +398,10 @@ def classify(s: dict) -> str:
         return "TIMED_OUT"
     if s["result"] == "KILLED_LOW_MEMORY":
         return "KILLED_LOW_MEMORY"
-    if s["result"] != "COMPLETED" or s["load_status"] in ("INIT_FAILED", "TIMEOUT", "FAILED") or s["failed"]:
+    if s["result"] != "COMPLETED" or s["load_status"] in ("INIT_FAILED", "TIMEOUT", "FAILED"):
         return "FAILED"
+    if s["failed"]:
+        return "MEASURED_WITH_FAILURES" if s["completed"] else "FAILED"
     return "MEASURED"
 
 
@@ -413,7 +418,8 @@ def write_report(run: dict) -> None:
           "> These are measurements of **synthetic fixtures on a memory-constrained development laptop**. "
           "They validate that the stages work and bound their cost. They are not accuracy results, not "
           "Jetson numbers, and not evidence of production readiness.", "",
-          "Status legend: **MEASURED** (ran, statistics from completed samples only) · **NOT_AVAILABLE** "
+          "Status legend: **MEASURED** (ran, statistics from completed samples only) · "
+          "**MEASURED_WITH_FAILURES** (some calls failed; statistics exclude them) · **NOT_AVAILABLE** "
           "(engine/runtime/model missing) · **FAILED** · **TIMED_OUT** · **KILLED_LOW_MEMORY** · "
           "**SKIPPED_LOW_MEMORY** / **SKIPPED_TOTAL_TIMEOUT** (not started).", "",
           "## 1. Environment", "",
@@ -464,9 +470,19 @@ def write_report(run: dict) -> None:
     L += ["", "Per-fixture outcome (engines run → text):", ""]
     for s in run["stages"]:
         if s["stage"].startswith("mode:") and s["samples"]:
-            L.append(f"- **{s['stage'][5:]}**: " + "; ".join(
-                f"{fid}: {x.get('outcome')} {'+'.join(x.get('engines_run') or []) or '(gated)'} → `{x.get('text', '')[:24]}`"
-                for fid, x in {x['fixture']: x for x in s["samples"]}.items()))
+            parts = []
+            for fid in dict.fromkeys(x["fixture"] for x in s["samples"]):
+                rows = [x for x in s["samples"] if x["fixture"] == fid]
+                ok = [x for x in rows if x["status"] == "OK"]
+                bad = [x["status"] for x in rows if x["status"] != "OK"]
+                if ok:
+                    x = ok[0]
+                    engines = "+".join(x.get("engines_run") or []) or "(quality gate)"
+                    parts.append(f"{fid}: {x.get('outcome')} {engines} → `{x.get('text', '')[:24]}` "
+                                 f"({len(ok)} OK{', ' + ', '.join(bad) if bad else ''})")
+                else:
+                    parts.append(f"{fid}: {', '.join(bad)}")
+            L.append(f"- **{s['stage'][5:]}**: " + "; ".join(parts))
         elif s["stage"].startswith("mode:"):
             L.append(f"- **{s['stage'][5:]}**: {classify(s)}" + (f" — {s['skip_reason']}" if s.get("skip_reason") else ""))
 
@@ -509,7 +525,7 @@ def write_report(run: dict) -> None:
           "measured separately (text processing and scoring are sub-millisecond and not timed here).",
           "- Windows speech and eSpeak are timed once each including process start and silent playback; they "
           "are not synthesis-only numbers.",
-          "- CPU % is the child's summed per-process CPU (100 = one full logical core), sampled every 0.5 s.", ""]
+          f"- CPU % is the child's summed per-process CPU (100 = one full logical core), sampled every {MONITOR_INTERVAL_S} s.", ""]
     L += ["## 10. Exact benchmark configuration", "",
           f"- Script: `tests/benchmarks/isolated_benchmark.py` (commit {run['git_commit']})",
           f"- Config: `core.config.DEFAULT_CONFIG` (not the local `config.json`); TTS volume forced to 0.",
@@ -537,7 +553,9 @@ def observations(stages: list) -> list:
                    f"{slowest} ({eng[slowest]['latency']['median']} s median).")
     for k, v in by.items():
         if classify(v) not in ("MEASURED", "NOT_AVAILABLE"):
-            obs.append(f"{k}: {classify(v)} ({v.get('abort') or v.get('skip_reason') or v['result']}).")
+            errors = sorted({x["error"] for x in v["samples"] if x["status"] == "FAILED" and x.get("error")})
+            detail = v.get("abort") or v.get("skip_reason") or "; ".join(errors) or v["result"]
+            obs.append(f"{k}: {classify(v)} ({detail}).")
     fb = by.get("mode:fallback")
     if fb and fb.get("engines_loaded_at_end"):
         loaded = [n for n, st in fb["engines_loaded_at_end"].items() if st == "READY"]
