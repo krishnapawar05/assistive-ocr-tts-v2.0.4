@@ -49,6 +49,47 @@ class FakeOCRAdapter(OCRAdapter):
         return OCRResult(text=self.text, confidence=self.confidence, bounding_boxes=[(0, 0, w // 2, h // 2)])
 
 
+def make_config(tmpdir: str, data: Optional[dict] = None):
+    """A real core.config.Config backed by a temp file (optionally with a full data dict)."""
+    import json
+    import os
+
+    from core.config import Config
+    path = os.path.join(tmpdir, "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data if data is not None else default_config(), f)
+    return Config(path)
+
+
+class RecordingTTS:
+    """TTS adapter stand-in that records what would have been spoken (no audio)."""
+
+    def __new__(cls, name: str = "coqui", fail=None, status=None, delay_s: float = 0.0):
+        from core.status import EngineStatus
+        from core.tts.base import TTSAdapter, TTSError
+
+        class _Recording(TTSAdapter):
+            def _load(self_inner):
+                return (status or EngineStatus.READY), "recording"
+
+            def _speak(self_inner, text):
+                import time
+                if fail:
+                    raise TTSError(fail, self_inner.name, "simulated failure")
+                if delay_s:
+                    self_inner._stop_requested.wait(delay_s)
+                self_inner.spoken.append(text)
+
+            def _stop(self_inner):
+                pass
+
+        cfg = default_config()["tts"]
+        obj = _Recording({"enabled": True}, cfg)
+        obj.name = name
+        obj.spoken = []
+        return obj
+
+
 class NetworkAccessAttempted(AssertionError):
     pass
 
