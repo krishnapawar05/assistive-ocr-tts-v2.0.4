@@ -18,6 +18,7 @@ import numpy as np
 from core.frame.processing import Preprocessor
 from core.ocr.service import build_adapters
 from core.ocr.types import EngineStatus, OCRError, OCRErrorCode
+from core.status import UNAVAILABLE_STATUSES
 from tests.helpers import default_config, no_network
 
 FIXTURES = os.path.join(os.path.dirname(os.path.dirname(__file__)), "fixtures", "ocr")
@@ -70,8 +71,9 @@ class EngineTestBase(unittest.TestCase):
         cls.pre = Preprocessor(default_config()["frame"]["preprocess"])
 
     def setUp(self):
-        if not self.adapter.is_available:
+        if self.adapter.status in UNAVAILABLE_STATUSES:
             self.skipTest(f"NOT_AVAILABLE: {self.adapter.status.value}: {self.adapter.status_detail}")
+        # INIT_FAILED and anything else unexpected falls through and fails the tests.
 
     def fixture(self, fid: str) -> np.ndarray:
         img = cv2.imread(os.path.join(FIXTURES, MANIFEST[fid]["path"]))

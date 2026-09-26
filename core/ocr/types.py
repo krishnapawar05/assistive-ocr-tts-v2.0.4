@@ -3,19 +3,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..status import EngineStatus  # noqa: F401  (re-exported)
+
 BBox = Tuple[int, int, int, int]  # x, y, w, h in the coordinates of the image given to the adapter
-
-
-class EngineStatus(str, Enum):
-    """Lifecycle state of an engine. Only READY engines are used for inference."""
-
-    UNINITIALIZED = "UNINITIALIZED"
-    READY = "READY"
-    DISABLED = "DISABLED"                          # turned off in config
-    NOT_AVAILABLE = "NOT_AVAILABLE"                # package or external runtime missing
-    MODEL_NOT_AVAILABLE = "MODEL_NOT_AVAILABLE"    # runtime present, local model files missing
-    LANGUAGE_NOT_SUPPORTED = "LANGUAGE_NOT_SUPPORTED"
-    INIT_FAILED = "INIT_FAILED"                    # present but failed to load
 
 
 class OCRErrorCode(str, Enum):
