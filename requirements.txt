@@ -1,35 +1,34 @@
-# requirements.txt
-# Core web framework
-fastapi
+# requirements.txt — Smart Vision Assist (Python 3.10)
+# Ranges are the versions verified together on the dev machine (see
+# docs/baseline/dependency-matrix.md). Exact verified set: docs/environment/pip-freeze.txt.
+# On Jetson (aarch64), install torch/torchvision/torchaudio from NVIDIA's JetPack wheels first.
 
-uvicorn[standard]
-jinja2
-python-multipart
-aiofiles
+# --- Web dashboard ---
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+jinja2>=3.1,<4.0
 
-# Computer Vision & Image Processing
-opencv-python>=4.6.0,<4.9.0  # Compatible with numpy 1.22
-Pillow>=7.1.2
+# --- Vision / numerics ---
+opencv-python-headless>=4.10,<5.0
+numpy>=1.26,<2.3
+Pillow>=10.0,<13.0
+psutil>=5.9,<8.0
 
-# Scientific Computing (pinned for TTS compatibility)
-numpy==1.22.0  # TTS 0.22.0 requires this exact version for Python 3.10
-scipy>=1.8.0,<1.12.0  # Compatible with numpy 1.22 (avoid 1.15.x which needs numpy 2.x)
+# --- OCR engines (all optional at runtime; each adapter reports NOT_AVAILABLE if missing) ---
+pytesseract>=0.3.10,<0.4   # also needs the Tesseract executable (see README)
+easyocr>=1.7.1,<1.8
+paddleocr>=3.3,<3.4        # 3.x API: device=..., predict(); 2.x use_gpu API is NOT supported
+paddlepaddle>=3.2,<3.3
+transformers>=4.45,<4.58   # TrOCR
+torch>=2.4,<2.10
+torchvision>=0.19,<0.25
 
-# --- OCR Libraries ---
-paddleocr
-paddlepaddle>=3.0.0  # Core PaddlePaddle framework (required by paddleocr) - version 3.x available
-paddlex  # Required by paddleocr (works with numpy 1.22 despite version warning)
-pytesseract
-ultralytics>=8.0.0  # Should work with numpy 1.22
-rapidfuzz
-symspellpy
-easyocr
-transformers>=4.20.0  # Required for TrOCR - version 4.35.2+ installed
-torch>=1.7.0  # PyTorch - version 2.9.1 installed, constraint relaxed for compatibility
-torchvision>=0.8.1  # Compatible with torch
+# --- Text processing ---
+rapidfuzz>=3.0,<4.0
 
-# --- Audio Libraries ---
-sounddevice
-soundfile
-TTS==0.22.0  # Pin to version that works with numpy 1.22
-ImageHash
+# --- Audio / TTS ---
+sounddevice>=0.4.6,<0.6
+soundfile>=0.12,<0.14
+coqui-tts>=0.27,<0.28      # maintained Coqui fork; import name is still `TTS`
+torchaudio>=2.4,<2.10      # required by coqui-tts; must match torch
+torchcodec>=0.8,<0.9       # coqui-tts refuses to import on torch>=2.9 without it
