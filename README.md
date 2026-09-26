@@ -160,10 +160,17 @@ Recognized text is only logged at DEBUG level. Camera frames are never written t
 ## Testing
 
 ```powershell
-.venv\Scripts\python.exe -m unittest discover -s tests -t .        # everything (~15 min)
-.venv\Scripts\python.exe -m unittest discover -s tests/unit -t .   # fast, no models (~5 s)
-.venv\Scripts\python.exe scripts\run_tests.py                      # everything + engine PASS/FAIL/NOT_AVAILABLE matrix
+.venv\Scripts\python.exe scripts\run_tests.py                      # everything + engine PASS/FAIL/NOT_AVAILABLE matrix (~12 min)
+.venv\Scripts\python.exe scripts\run_tests.py --fast               # unit tests only
+.venv\Scripts\python.exe -m unittest discover -s tests/unit -t .   # unit tests, single process
 ```
+
+`run_tests.py` runs each test module in its own process, so the models one module loads are
+freed before the next starts, and prints each module's peak RSS. Heaviest modules measured on the
+dev machine: `test_ocr_pipeline` 2.3 GB (ensemble loads three OCR engines), `test_end_to_end`
+2.2 GB. If available RAM stays below `--min-available-gb` (default 0.3) the current module is
+killed and reported as a failure. Running the whole `tests/` tree in one process
+(`unittest discover -s tests`) needs more than 2.5 GB free.
 
 | Suite | What it covers |
 |---|---|

@@ -14,9 +14,9 @@ conflicts with them.
 - Protected baseline: git tag `v2.0.4-baseline`. Baseline measurements: `docs/baseline/`.
 - Current milestone: **Milestone A — baseline-preserving modularization** (OCR + TTS stable).
   Do not start YOLO, context, priority, or transport work until it is signed off.
-- Tests: `.venv/Scripts/python.exe scripts/run_tests.py` (PASS/FAIL/NOT_AVAILABLE per engine);
-  unit only: `-m unittest discover -s tests/unit -t .`. INIT_FAILED must never be reported as
-  NOT_AVAILABLE.
+- Tests: `.venv/Scripts/python.exe scripts/run_tests.py` (one process per test module;
+  PASS/FAIL/NOT_AVAILABLE per engine); unit only: `--fast`. INIT_FAILED must never be reported
+  as NOT_AVAILABLE. Don't run the whole `tests/` tree in one process: engine caches exceed RAM.
 - The dev machine has ~1 GB free RAM: never run two OCR engines at once, and don't run the full
   test suite concurrently with a benchmark.
 - Dev machine is Windows / Python 3.10 (`.venv`); target is Jetson Orin Nano. Code must run on both.
