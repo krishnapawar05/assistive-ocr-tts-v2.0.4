@@ -13,8 +13,8 @@
               exposed/tiny/blur    match the last one    grayscale, upscale tiny
                                     ▼
  core/ocr     OCRService (mode: single_engine | fallback | ensemble)
-                ├─ TesseractOCRAdapter   ┐ each on its own worker thread
-                ├─ EasyOCRAdapter        │ with a timeout; BUSY if still running
+                ├─ TesseractOCRAdapter   ┐ each on its own worker thread with a timeout;
+                ├─ EasyOCRAdapter        │ only one engine runs at a time (ADR 0006)
                 ├─ PaddleOCRAdapter      │
                 └─ TrOCRAdapter ◄─ regions.find_text_lines (line crops)
               OCRScorer + TextProcessor ─► OCRDecision (winner + explained scores)
@@ -75,4 +75,5 @@ a new `CameraInterface` (e.g. glasses-side transport) plugs in via
 ## Decisions
 
 See `docs/adr/`: 0001 PowerShell injection, 0002 staged pipeline, 0003 OCR scoring and modes,
-0004 duplicates and speech policy, 0005 dependencies and config.
+0004 duplicates and speech policy, 0005 dependencies and config, 0006 engine serialization and
+lazy loading.

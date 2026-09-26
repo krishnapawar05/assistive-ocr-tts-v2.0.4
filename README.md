@@ -145,6 +145,8 @@ with the same list. v2.0.4 keys are migrated automatically. Main settings:
 | `ocr.language` | `en`, `hi`, `kn` (legacy `eng`/`hin`/`kan` accepted) |
 | `ocr.text_type` | `printed` or `handwritten` (changes engine reliability weights) |
 | `ocr.min_confidence`, `ocr.min_final_score`, `ocr.accept_score` | confidence gates |
+| `ocr.preload` | `primary` (default: fallback engines load on first use) or `all` |
+| `ocr.serialize_engines` | never run two OCR engines at once (default `true`; memory safety) |
 | `ocr.scoring.*` | scoring weights, penalties and per-engine reliability |
 | `ocr.duplicates.cooldown_s`, `fuzzy_threshold` | repeat suppression |
 | `ocr.engines.<engine>.*` | per-engine enable, timeout, model paths |
