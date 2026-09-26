@@ -5,12 +5,20 @@ conflicts with them.
 
 ## Current state
 
-- Entry point: `app.py` (FastAPI dashboard, port 8000). Core: `core/pipeline.py`
-  (capture → OCR → TTS threads), `core/ocr_engine.py`, `core/tts_engine.py`, `core/config.py`.
+- Entry point: `app.py` (FastAPI dashboard, port 8000; `SVA_CONFIG` overrides the config path).
+- Pipeline: `core/pipeline.py` orchestrates `core/camera` → `core/frame` → `core/ocr`
+  (adapters + `service.py` + `scoring.py`) → `core/text` → `core/audio` → `core/tts`.
+  See `docs/architecture/overview.md` and ADRs in `docs/adr/`.
+- `core/ocr_engine.py` and `core/tts_engine.py` are the **legacy v2.0.4 engines**, unused by the
+  app and kept only for baseline comparison (`tests/benchmarks/baseline_ocr.py`).
 - Protected baseline: git tag `v2.0.4-baseline`. Baseline measurements: `docs/baseline/`.
-- Current milestone: **Milestone A — baseline-preserving modularization**
-  (CameraInterface → OCRAdapter → TextProcessor → TTSAdapter → AudioManager).
-  Do not start YOLO, context, priority, or transport work until Milestone A is done.
+- Current milestone: **Milestone A — baseline-preserving modularization** (OCR + TTS stable).
+  Do not start YOLO, context, priority, or transport work until it is signed off.
+- Tests: `.venv/Scripts/python.exe scripts/run_tests.py` (PASS/FAIL/NOT_AVAILABLE per engine);
+  unit only: `-m unittest discover -s tests/unit -t .`. INIT_FAILED must never be reported as
+  NOT_AVAILABLE.
+- The dev machine has ~1 GB free RAM: never run two OCR engines at once, and don't run the full
+  test suite concurrently with a benchmark.
 - Dev machine is Windows / Python 3.10 (`.venv`); target is Jetson Orin Nano. Code must run on both.
 
 ## Project rules
