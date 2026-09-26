@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container-fluid">
+  <!-- Main Dashboard Section -->
+  <div class="row">
+    <div class="col-lg-8">
+      <!-- Live OCR Output Card -->
+      <div class="card mb-4" id="dashboard" tabindex="0" aria-label="Dashboard">
+        <div class="card-header">
+          <span>📹 Live OCR Output</span>
+          <span id="statusBadge" class="status-badge status-stopped">Stopped</span>
+        </div>
+        <div class="card-body">
+          <div id="ocrOutput" class="ocr-box" role="region" aria-live="polite" aria-atomic="true">
+            Waiting for OCR output...
+          </div>
+          <div class="control-buttons mt-3">
+            <button class="btn btn-success" id="startBtn">
+              <span>▶️ Start</span>
+            </button>
+            <button class="btn btn-danger" id="stopBtn">
+              <span>⏹️ Stop</span>
+            </button>
+            <button class="btn btn-primary" id="replayBtn">
+              <span>🔊 Replay Audio</span>
+            </button>
+            <button class="btn btn-info" id="testCameraBtn">
+              <span>📷 Test Camera</span>
+            </button>
+            <button class="btn btn-warning" id="testOcrBtn">
+              <span>🔍 Test OCR</span>
+            </button>
+          </div>
+          <div id="alertContainer" class="mt-3"></div>
+        </div>
+      </div>
+
+      <!-- Text History Card -->
+      <div class="card mb-4" id="history" tabindex="0" aria-label="Text history">
+        <div class="card-header">
+          <span>📜 Text History</span>
+          <span id="historyCount" class="badge bg-secondary">0</span>
+        </div>
+        <div class="card-body">
+          <div id="historyList" style="max-height: 400px; overflow-y: auto;">
+            <div class="text-muted text-center">No history yet</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Sidebar -->
+    <div class="col-lg-4">
+      <!-- OCR Settings Card -->
+      <div class="card mb-4" id="ocr" tabindex="0">
+        <div class="card-header">
+          <span>🔍 OCR Settings</span>
+        </div>
+        <div class="card-body">
+          <form id="ocrForm">
+            <div class="mb-3">
+              <label for="ocrEngine" class="form-label">OCR Engine</label>
+              <select id="ocrEngine" name="ocr_engine" class="form-select" aria-label="OCR engine select">
+                <option value="paddle">PaddleOCR (Recommended)</option>
+                <option value="tesseract">Tesseract (Fallback)</option>
+                <option value="easyocr">EasyOCR (Handwriting)</option>
+                <option value="trocr">TrOCR (Handwriting)</option>
+              </select>
+              <small class="form-text text-muted">Select the OCR engine to use</small>
+            </div>
+            <div class="mb-3">
+              <label for="ocrLang" class="form-label">Language</label>
+              <select id="ocrLang" name="language" class="form-select">
+                <option value="eng">English</option>
+                <option value="hin">Hindi</option>
+                <option value="kan">Kannada</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="captureInterval" class="form-label">
+                Capture Interval (seconds)
+                <span class="range-value" id="captureIntervalValue">{{ config['ocr']['capture_interval'] }}</span>
+              </label>
+              <input id="captureInterval" name="capture_interval" type="range" 
+                     class="form-range" min="0.1" max="5" step="0.1" 
+                     value="{{ config['ocr']['capture_interval'] }}">
+              <small class="form-text text-muted">Lower values = faster detection</small>
+            </div>
+            <div class="mb-3">
+              <label for="minConfidence" class="form-label">
+                Min Confidence
+                <span class="range-value" id="minConfidenceValue">{{ config['ocr'].get('min_confidence', 0.5) }}</span>
+              </label>
+              <input id="minConfidence" name="min_confidence" type="range" 
+                     class="form-range" min="0.1" max="1.0" step="0.05" 
+                     value="{{ config['ocr'].get('min_confidence', 0.5) }}">
+            </div>
+            <div class="mb-3">
+              <label for="minTextLen" class="form-label">
+                Min Text Length
+                <span class="range-value" id="minTextLenValue">{{ config['ocr'].get('min_text_len', 3) }}</span>
+              </label>
+              <input id="minTextLen" name="min_text_len" type="range" 
+                     class="form-range" min="1" max="20" step="1" 
+                     value="{{ config['ocr'].get('min_text_len', 3) }}">
+            </div>
+            <div class="mb-3 form-check">
+              <input type="checkbox" class="form-check-input" id="parallelOcr" name="parallel_ocr" 
+                     {% if config['ocr'].get('parallel_ocr', True) %}checked{% endif %}>
+              <label class="form-check-label" for="parallelOcr">
+                Parallel OCR Processing
+              </label>
+              <small class="form-text text-muted d-block">Run multiple engines simultaneously</small>
+            </div>
+            <div class="mb-3 form-check">
+              <input type="checkbox" class="form-check-input" id="useTrocr" name="use_trocr" 
+                     {% if config['ocr'].get('use_trocr', True) %}checked{% endif %}>
+              <label class="form-check-label" for="useTrocr">
+                Enable TrOCR (Handwriting)
+              </label>
+            </div>
+            <div class="mb-3 form-check">
+              <input type="checkbox" class="form-check-input" id="handwritingFallback" name="handwriting_fallback" 
+                     {% if config['ocr'].get('handwriting_fallback', True) %}checked{% endif %}>
+              <label class="form-check-label" for="handwritingFallback">
+                EasyOCR Fallback
+              </label>
+            </div>
+            <button type="submit" class="btn btn-primary w-100" id="saveOcr">
+              💾 Save OCR Settings
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- TTS Settings Card -->
+      <div class="card mb-4" id="tts" tabindex="0">
+        <div class="card-header">
+          <span>🔊 TTS Settings</span>
+        </div>
+        <div class="card-body">
+          <form id="ttsForm">
+            <div class="mb-3">
+              <label for="ttsEngine" class="form-label">TTS Engine</label>
+              <select id="ttsEngine" name="tts_engine" class="form-select">
+                <option value="coqui">Coqui TTS</option>
+                <option value="espeak">espeak-ng</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="ttsVoice" class="form-label">Voice (Coqui)</label>
+              <select id="ttsVoice" name="voice" class="form-select">
+                <option value="p335">Default (p335)</option>
+                {% for voice in voices %}
+                <option value="{{ voice }}">{{ voice }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="ttsSpeed" class="form-label">
+                Speed
+                <span class="range-value" id="ttsSpeedValue">{{ config['tts']['speed'] }}</span>
+              </label>
+              <input id="ttsSpeed" name="speed" type="range" 
+                     class="form-range" min="0.5" max="1.6" step="0.1" 
+                     value="{{ config['tts']['speed'] }}">
+            </div>
+            <div class="mb-3">
+              <label for="ttsVolume" class="form-label">
+                Volume
+                <span class="range-value" id="ttsVolumeValue">{{ config['tts']['volume'] }}</span>
+              </label>
+              <input id="ttsVolume" name="volume" type="range" 
+                     class="form-range" min="0.1" max="1.0" step="0.1" 
+                     value="{{ config['tts']['volume'] }}">
+            </div>
+            <button type="submit" class="btn btn-primary w-100" id="saveTts">
+              💾 Save TTS Settings
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Camera Settings Card -->
+      <div class="card mb-4" id="camera" tabindex="0">
+        <div class="card-header">
+          <span>📷 Camera Settings</span>
+        </div>
+        <div class="card-body">
+          <form id="cameraForm">
+            <div class="mb-3">
+              <label for="cameraSource" class="form-label">Camera Source</label>
+              <select id="cameraSource" name="source_type" class="form-select">
+                <option value="opencv">OpenCV</option>
+                <option value="gstreamer">GStreamer (nvarguscamerasrc)</option>
+                <option value="arducam">ArduCam SDK</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="cameraId" class="form-label">Camera ID</label>
+              <input id="cameraId" name="camera_id" type="number" 
+                     class="form-control" min="0" 
+                     value="{{ config['camera']['camera_id'] }}">
+              <small class="form-text text-muted">Usually 0 for default camera</small>
+            </div>
+            <div class="mb-3">
+              <label for="resolution" class="form-label">Resolution</label>
+              <select id="resolution" name="resolution" class="form-select">
+                <option value="720p">720p (1280x720)</option>
+                <option value="1080p">1080p (1920x1080)</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary w-100" id="saveCamera">
+              💾 Save Camera Settings
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Initialize dashboard with config
+  const CONFIG = {{ config | tojson }};
+  const VOICES = {{ voices | tojson }};
+</script>
+<script src="/static/dashboard.js"></script>
+<script>
+  // Initialize dashboard after script loads
+  document.addEventListener('DOMContentLoaded', function() {
+    if (typeof Dashboard !== 'undefined') {
+      const dashboard = new Dashboard(CONFIG, VOICES);
+      dashboard.init();
+    } else {
+      console.error('Dashboard class not found');
+    }
+  });
+</script>
+{% endblock %}

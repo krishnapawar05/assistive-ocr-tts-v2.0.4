@@ -1,0 +1,13 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Runtime artifacts (TTS fallback writes this; may contain spoken OCR text)
+last_audio.wav
+
+# Local benchmark outputs that may contain captured frames
+tests/benchmarks/output/

@@ -1,0 +1,35 @@
+# requirements.txt
+# Core web framework
+fastapi
+
+uvicorn[standard]
+jinja2
+python-multipart
+aiofiles
+
+# Computer Vision & Image Processing
+opencv-python>=4.6.0,<4.9.0  # Compatible with numpy 1.22
+Pillow>=7.1.2
+
+# Scientific Computing (pinned for TTS compatibility)
+numpy==1.22.0  # TTS 0.22.0 requires this exact version for Python 3.10
+scipy>=1.8.0,<1.12.0  # Compatible with numpy 1.22 (avoid 1.15.x which needs numpy 2.x)
+
+# --- OCR Libraries ---
+paddleocr
+paddlepaddle>=3.0.0  # Core PaddlePaddle framework (required by paddleocr) - version 3.x available
+paddlex  # Required by paddleocr (works with numpy 1.22 despite version warning)
+pytesseract
+ultralytics>=8.0.0  # Should work with numpy 1.22
+rapidfuzz
+symspellpy
+easyocr
+transformers>=4.20.0  # Required for TrOCR - version 4.35.2+ installed
+torch>=1.7.0  # PyTorch - version 2.9.1 installed, constraint relaxed for compatibility
+torchvision>=0.8.1  # Compatible with torch
+
+# --- Audio Libraries ---
+sounddevice
+soundfile
+TTS==0.22.0  # Pin to version that works with numpy 1.22
+ImageHash
