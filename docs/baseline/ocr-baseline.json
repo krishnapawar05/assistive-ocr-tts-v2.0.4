@@ -1,0 +1,236 @@
+{
+  "note": "Synthetic English frames only. Accuracy here is NOT representative of real classroom captures; Hindi/Kannada not measured.",
+  "environment": {
+    "python": "3.10.0",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 154 Stepping 4, GenuineIntel",
+    "cpu_count": 12,
+    "total_ram_gb": 8.3
+  },
+  "ocr_config": {
+    "engine": "tesseract",
+    "language": "eng",
+    "capture_interval": 0.2,
+    "min_confidence": 0.5,
+    "min_text_len": 3,
+    "use_yolo": false,
+    "onnx_sr_model": null,
+    "parallel_ocr": true,
+    "use_trocr": true,
+    "handwriting_fallback": true,
+    "easyocr_languages": [
+      "en"
+    ]
+  },
+  "engines_loaded": {
+    "tesseract": false,
+    "paddle": false,
+    "easyocr": true,
+    "trocr": true
+  },
+  "init_time_s": 21.24,
+  "rss_mb": {
+    "before_init": 69,
+    "after_init": 438,
+    "after_run": 1177
+  },
+  "repeats_per_image": 3,
+  "results": [
+    {
+      "id": "sign_short",
+      "style": "clean",
+      "ground_truth": "Room 204",
+      "output_text": "Room 204",
+      "winning_engine": "easyocr",
+      "confidence": 0.983,
+      "cer": 0.0,
+      "e2e_latency_s": {
+        "min": 7.285,
+        "median": 10.428,
+        "max": 89.452
+      },
+      "per_engine": {
+        "easyocr": {
+          "latency_s": 3.565,
+          "text": "Room 204",
+          "confidence": 0.983,
+          "cer": 0.0
+        },
+        "trocr": {
+          "latency_s": 2.868,
+          "text": "Room 204",
+          "confidence": 0.7,
+          "cer": 0.0
+        }
+      }
+    },
+    {
+      "id": "sentence",
+      "style": "clean",
+      "ground_truth": "The quick brown fox jumps over the lazy dog",
+      "output_text": "# the quick brown toxtumps over the lazy dod",
+      "winning_engine": "trocr",
+      "confidence": 0.7,
+      "cer": 0.14,
+      "e2e_latency_s": {
+        "min": 8.58,
+        "median": 9.412,
+        "max": 16.529
+      },
+      "per_engine": {
+        "easyocr": {
+          "latency_s": 2.797,
+          "text": "The quick brown fox jumps over the lazy dog",
+          "confidence": 0.812,
+          "cer": 0.0
+        },
+        "trocr": {
+          "latency_s": 2.274,
+          "text": "# the quick brown toxtumps over the lazy dod",
+          "confidence": 0.7,
+          "cer": 0.14
+        }
+      }
+    },
+    {
+      "id": "board_lines",
+      "style": "board",
+      "ground_truth": "Photosynthesis\nLight energy to chemical energy",
+      "output_text": "Photosynthesis Light energy to chemical energy",
+      "winning_engine": "easyocr",
+      "confidence": 0.951,
+      "cer": 0.0,
+      "e2e_latency_s": {
+        "min": 3.726,
+        "median": 4.457,
+        "max": 13.964
+      },
+      "per_engine": {
+        "easyocr": {
+          "latency_s": 10.697,
+          "text": "Photosynthesis Light energy to chemical energy",
+          "confidence": 0.951,
+          "cer": 0.0
+        },
+        "trocr": {
+          "latency_s": 4.436,
+          "text": "2 References",
+          "confidence": 0.7,
+          "cer": 0.848
+        }
+      }
+    },
+    {
+      "id": "numbers",
+      "style": "clean",
+      "ground_truth": "Chapter 7 Page 132",
+      "output_text": "2 Chapter 7 Page 132",
+      "winning_engine": "trocr",
+      "confidence": 0.7,
+      "cer": 0.111,
+      "e2e_latency_s": {
+        "min": 9.2,
+        "median": 19.722,
+        "max": 23.954
+      },
+      "per_engine": {
+        "easyocr": {
+          "latency_s": 6.679,
+          "text": "Chapter 7 Page 132",
+          "confidence": 0.837,
+          "cer": 0.0
+        },
+        "trocr": {
+          "latency_s": 15.169,
+          "text": "2 Chapter 7 Page 132",
+          "confidence": 0.7,
+          "cer": 0.111
+        }
+      }
+    },
+    {
+      "id": "low_contrast",
+      "style": "low_contrast",
+      "ground_truth": "Exit on the left",
+      "output_text": "Exit on the left",
+      "winning_engine": "easyocr",
+      "confidence": 0.996,
+      "cer": 0.0,
+      "e2e_latency_s": {
+        "min": 11.637,
+        "median": 13.034,
+        "max": 80.63
+      },
+      "per_engine": {
+        "easyocr": {
+          "latency_s": 11.434,
+          "text": "Exit on the left",
+          "confidence": 0.996,
+          "cer": 0.0
+        },
+        "trocr": {
+          "latency_s": 29.161,
+          "text": "2 Exxonstorm",
+          "confidence": 0.7,
+          "cer": 0.812
+        }
+      }
+    },
+    {
+      "id": "blurred",
+      "style": "blur",
+      "ground_truth": "Library closes at 5 PM",
+      "output_text": "1 Library closes at a p.",
+      "winning_engine": "trocr",
+      "confidence": 0.7,
+      "cer": 0.182,
+      "e2e_latency_s": {
+        "min": 19.088,
+        "median": 48.965,
+        "max": 77.462
+      },
+      "per_engine": {
+        "easyocr": {
+          "latency_s": 6.691,
+          "text": "Library closes at 5 PM",
+          "confidence": 0.892,
+          "cer": 0.0
+        },
+        "trocr": {
+          "latency_s": 4.746,
+          "text": "1 Library closes at a p.",
+          "confidence": 0.7,
+          "cer": 0.182
+        }
+      }
+    },
+    {
+      "id": "blank",
+      "style": "clean",
+      "ground_truth": "",
+      "output_text": "0 0",
+      "winning_engine": "trocr",
+      "confidence": 0.7,
+      "cer": 1.0,
+      "e2e_latency_s": {
+        "min": 7.384,
+        "median": 7.406,
+        "max": 7.5
+      },
+      "per_engine": {
+        "easyocr": {
+          "latency_s": 6.848,
+          "text": "",
+          "confidence": 0.0,
+          "cer": 0.0
+        },
+        "trocr": {
+          "latency_s": 7.362,
+          "text": "0 0",
+          "confidence": 0.7,
+          "cer": 1.0
+        }
+      }
+    }
+  ]
+}
