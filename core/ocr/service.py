@@ -7,8 +7,13 @@ Modes:
 
 Each engine runs on its own single worker thread so a hung engine can be timed out without
 blocking the pipeline; while it is still busy it is skipped (BUSY) instead of piling up work.
+
+With ``serialize_engines`` (default) no engine starts while ANY engine call is still running,
+process-wide and across service instances. On an 8 GB machine a timed-out PaddleOCR/EasyOCR
+call plus a second engine exhausted memory and crashed the process natively (segfault).
 """
 import logging
+import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
@@ -22,6 +27,15 @@ from .scoring import OCRScorer
 from .types import EngineStatus, OCRDecision, OCRError, OCRErrorCode, OCRResult
 
 logger = logging.getLogger("ocr.service")
+
+# Process-wide registry of submitted engine calls (engine name -> latest Future).
+_INFLIGHT: Dict[str, Future] = {}
+_INFLIGHT_LOCK = threading.Lock()
+
+
+def engines_in_flight() -> List[str]:
+    with _INFLIGHT_LOCK:
+        return [n for n, f in _INFLIGHT.items() if not f.done()]
 
 
 def build_adapters(ocr_cfg: Dict, language: str) -> Dict[str, OCRAdapter]:
@@ -58,14 +72,21 @@ class OCRService:
             if name in self.adapters and name not in self.order:
                 self.order.append(name)
         self._executors = {n: ThreadPoolExecutor(1, thread_name_prefix=f"ocr-{n}") for n in self.order}
+        self.serialize = bool(ocr_cfg["serialize_engines"])
         self._pending: Dict[str, Future] = {}
 
     # ----- lifecycle -------------------------------------------------------------------------
     def initialize(self) -> Dict[str, str]:
-        """Load engines needed by the mode. single_engine loads until one is ready."""
+        """Load engines at startup.
+
+        ensemble, or preload="all": every engine in the order.
+        otherwise: engines up to and including the first READY one; later fallback engines
+        load on first use (saves memory and startup time when the primary is good enough).
+        """
+        load_all = self.mode == "ensemble" or self.cfg["preload"] == "all"
         for name in self.order:
             status = self.adapters[name].initialize()
-            if self.mode == "single_engine" and status == EngineStatus.READY:
+            if not load_all and status == EngineStatus.READY:
                 break
         if not self.available_engines():
             logger.error("No OCR engine available (%s). OCR is disabled until one is installed.",
@@ -84,24 +105,39 @@ class OCRService:
 
     # ----- inference ---------------------------------------------------------------------------
     def _engines_for_frame(self) -> List[str]:
+        """Engines to try for this frame. Unloaded fallback engines are included and loaded
+        only when the loop actually reaches them (see _ensure_loaded)."""
         names = []
         for name in self.order:
             adapter = self.adapters[name]
-            if adapter.status == EngineStatus.UNINITIALIZED:
-                adapter.initialize()  # lazy (single_engine only loads what it needs)
-            if adapter.is_available:
+            if self.mode == "single_engine" and adapter.status == EngineStatus.UNINITIALIZED:
+                adapter.initialize()
+            if adapter.is_available or adapter.status == EngineStatus.UNINITIALIZED:
                 names.append(name)
-                if self.mode == "single_engine":
+                if self.mode == "single_engine" and adapter.is_available:
                     break
         return names
 
+    def _ensure_loaded(self, name: str) -> bool:
+        adapter = self.adapters[name]
+        if adapter.status == EngineStatus.UNINITIALIZED:
+            logger.info("loading fallback OCR engine %s on first use", name)
+            adapter.initialize()
+        return adapter.is_available
+
     def _run(self, name: str, prepared: PreparedFrame) -> OCRResult:
         adapter = self.adapters[name]
-        pending = self._pending.get(name)
-        if pending is not None and not pending.done():
-            raise OCRError(OCRErrorCode.BUSY, name, "previous call still running")
-        fut = self._executors[name].submit(adapter.recognize, prepared.for_engine(adapter.input_kind))
-        self._pending[name] = fut
+        with _INFLIGHT_LOCK:
+            pending = self._pending.get(name)
+            if pending is not None and not pending.done():
+                raise OCRError(OCRErrorCode.BUSY, name, "previous call still running")
+            if self.serialize:
+                running = [n for n, f in _INFLIGHT.items() if not f.done()]
+                if running:
+                    raise OCRError(OCRErrorCode.BUSY, name, f"{running[0]} still running")
+            fut = self._executors[name].submit(adapter.recognize, prepared.for_engine(adapter.input_kind))
+            self._pending[name] = fut
+            _INFLIGHT[name] = fut
         timeout = float(adapter.cfg["timeout_s"])
         try:
             return fut.result(timeout=timeout)
@@ -118,6 +154,8 @@ class OCRService:
 
         results: List[OCRResult] = []
         for name in engines:
+            if not self._ensure_loaded(name):
+                continue
             decision.engines_run.append(name)
             try:
                 res = self._run(name, prepared)
@@ -152,8 +190,10 @@ class OCRService:
         elif decision.candidates:
             decision.reason = "below_threshold"
             logger.debug("OCR: no candidate passed (best %s)", OCRScorer.explain(decision.candidates[0]))
+        elif not decision.engines_run:
+            decision.reason = "no_engine_available"  # every lazily loaded engine failed to load
         else:
-            decision.reason = "no_text" if len(decision.errors) < len(engines) else "all_engines_failed"
+            decision.reason = "no_text" if len(decision.errors) < len(decision.engines_run) else "all_engines_failed"
         return decision
 
     def _best(self, candidates):

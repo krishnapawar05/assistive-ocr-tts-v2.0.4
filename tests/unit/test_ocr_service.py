@@ -82,16 +82,44 @@ class OCRServiceTest(unittest.TestCase):
         self.assertEqual(d.errors, {"easyocr": "INFERENCE_FAILED"})
         self.assertEqual(d.winner.result.engine, "paddle")
 
-    def test_engine_timeout_then_busy(self):
+    def test_engine_timeout_serialized(self):
+        """A timed-out engine blocks every other engine until it returns (memory safety)."""
         a = FakeOCRAdapter("easyocr", "Room 204", 0.9, delay_s=1.0, timeout_s=0.1)
         b = FakeOCRAdapter("paddle", "Room 204", 0.9)
         svc = service({"easyocr": a, "paddle": b})
         d1 = svc.recognize(self.frame)
-        self.assertEqual(d1.errors["easyocr"], "TIMEOUT")
-        self.assertEqual(d1.winner.result.engine, "paddle")
+        self.assertEqual(d1.errors, {"easyocr": "TIMEOUT", "paddle": "BUSY"})
+        self.assertEqual(b.calls, 0)
+        self.assertIsNone(d1.winner)
         d2 = svc.recognize(self.frame)  # easyocr still running -> skipped, not queued
         self.assertEqual(d2.errors["easyocr"], "BUSY")
+        svc._pending["easyocr"].result()  # let the slow call finish
+        d3 = svc.recognize(self.frame)
+        self.assertEqual(d3.errors, {"easyocr": "TIMEOUT", "paddle": "BUSY"})
+        svc._pending["easyocr"].result()
         svc.shutdown()
+
+    def test_engine_timeout_concurrent_when_serialization_off(self):
+        a = FakeOCRAdapter("easyocr", "Room 204", 0.9, delay_s=1.0, timeout_s=0.1)
+        b = FakeOCRAdapter("paddle", "Room 204", 0.9)
+        svc = service({"easyocr": a, "paddle": b}, serialize_engines=False)
+        d1 = svc.recognize(self.frame)
+        self.assertEqual(d1.errors["easyocr"], "TIMEOUT")
+        self.assertEqual(d1.winner.result.engine, "paddle")
+        svc._pending["easyocr"].result()
+        svc.shutdown()
+
+    def test_serialization_spans_service_instances(self):
+        """After a config reload the old service's stuck call still blocks the new service."""
+        slow = FakeOCRAdapter("easyocr", "Room 204", 0.9, delay_s=1.0, timeout_s=0.1)
+        old = service({"easyocr": slow})
+        self.assertEqual(old.recognize(self.frame).errors, {"easyocr": "TIMEOUT"})
+        old.shutdown()
+        new = service({"paddle": FakeOCRAdapter("paddle", "Room 204", 0.9)})
+        self.assertEqual(new.recognize(self.frame).errors, {"paddle": "BUSY"})
+        old._pending["easyocr"].result()
+        self.assertEqual(new.recognize(self.frame).text, "Room 204")
+        new.shutdown()
 
     def test_all_engines_unavailable(self):
         a = FakeOCRAdapter("easyocr", load_status=EngineStatus.MODEL_NOT_AVAILABLE)
@@ -115,6 +143,32 @@ class OCRServiceTest(unittest.TestCase):
         d = service({"easyocr": a, "paddle": b}).recognize(self.frame)
         self.assertEqual(a.status, EngineStatus.DISABLED)
         self.assertEqual(d.winner.result.engine, "paddle")
+
+    def test_fallback_engines_load_lazily(self):
+        a = FakeOCRAdapter("easyocr", "Room 204", 0.95)
+        b = FakeOCRAdapter("paddle", "Room 204", 0.95)
+        svc = service({"easyocr": a, "paddle": b})
+        self.assertEqual(b.status, EngineStatus.UNINITIALIZED)   # not loaded at startup
+        svc.recognize(self.frame)
+        self.assertEqual(b.status, EngineStatus.UNINITIALIZED)   # primary was good enough
+        a.text, a.confidence = "R§§m ¤¤4", 0.55
+        d = svc.recognize(self.frame)
+        self.assertEqual(b.status, EngineStatus.READY)           # loaded on first need
+        self.assertEqual(d.winner.result.engine, "paddle")
+
+    def test_preload_all(self):
+        a = FakeOCRAdapter("easyocr", "Room 204", 0.95)
+        b = FakeOCRAdapter("paddle", "Room 204", 0.95)
+        service({"easyocr": a, "paddle": b}, preload="all")
+        self.assertEqual(b.status, EngineStatus.READY)
+
+    def test_lazy_engines_all_fail_to_load(self):
+        a = FakeOCRAdapter("easyocr", "Room 204", 0.2)  # loads, but below min_confidence
+        b = FakeOCRAdapter("paddle", load_status=EngineStatus.MODEL_NOT_AVAILABLE)
+        d = service({"easyocr": a, "paddle": b}).recognize(self.frame)
+        self.assertEqual(b.status, EngineStatus.MODEL_NOT_AVAILABLE)
+        self.assertEqual(d.engines_run, ["easyocr"])
+        self.assertEqual(d.reason, "no_text")
 
     def test_unsupported_language(self):
         a = FakeOCRAdapter("trocr", "Room 204", 0.9, language="hi")

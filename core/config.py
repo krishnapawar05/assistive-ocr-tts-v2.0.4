@@ -66,6 +66,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "min_text_len": 3,
         "accept_score": 0.75,              # fallback mode stops once a candidate scores this high
         "min_final_score": 0.5,            # nothing below this is ever spoken
+        "serialize_engines": True,         # never run two OCR engines at once (memory safety)
+        "preload": "primary",              # primary: load fallback engines on first use | all
         "engines": {
             "tesseract": {
                 "enabled": True,
@@ -329,6 +331,8 @@ def validate(data: Dict[str, Any]) -> List[str]:
     num("ocr.min_text_len", 1, integer=True)
     num("ocr.accept_score", 0, 1)
     num("ocr.min_final_score", 0, 1)
+    boolean("ocr.serialize_engines")
+    choice("ocr.preload", ("primary", "all"))
     for eng in OCR_ENGINES:
         boolean(f"ocr.engines.{eng}.enabled")
         num(f"ocr.engines.{eng}.timeout_s", 0.1)
