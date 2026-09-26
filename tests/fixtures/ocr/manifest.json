@@ -1,0 +1,149 @@
+{
+  "note": "Synthetic images for engine functionality tests only; not accuracy evidence.",
+  "fixtures": [
+    {
+      "id": "room_204",
+      "path": "signs/room_204.png",
+      "category": "signs",
+      "language": "en",
+      "text": "Room 204",
+      "style": "clean",
+      "synthetic": true
+    },
+    {
+      "id": "exit_inverted",
+      "path": "signs/exit_inverted.png",
+      "category": "signs",
+      "language": "en",
+      "text": "EXIT",
+      "style": "inverted",
+      "synthetic": true
+    },
+    {
+      "id": "sentence",
+      "path": "printed/sentence.png",
+      "category": "printed",
+      "language": "en",
+      "text": "The quick brown fox jumps over the lazy dog",
+      "style": "clean",
+      "synthetic": true
+    },
+    {
+      "id": "chapter_numbers",
+      "path": "printed/chapter_numbers.png",
+      "category": "printed",
+      "language": "en",
+      "text": "Chapter 7 Page 132",
+      "style": "clean",
+      "synthetic": true
+    },
+    {
+      "id": "low_contrast",
+      "path": "printed/low_contrast.png",
+      "category": "printed",
+      "language": "en",
+      "text": "Exit on the left",
+      "style": "low_contrast",
+      "synthetic": true
+    },
+    {
+      "id": "blurred",
+      "path": "printed/blurred.png",
+      "category": "printed",
+      "language": "en",
+      "text": "Library closes at 5 PM",
+      "style": "blur",
+      "synthetic": true
+    },
+    {
+      "id": "greenboard",
+      "path": "classroom/greenboard.png",
+      "category": "classroom",
+      "language": "en",
+      "text": "Photosynthesis Light energy to chemical energy",
+      "style": "board",
+      "synthetic": true
+    },
+    {
+      "id": "whiteboard",
+      "path": "classroom/whiteboard.png",
+      "category": "classroom",
+      "language": "en",
+      "text": "Homework due Friday Read pages 40 to 45",
+      "style": "whiteboard",
+      "synthetic": true
+    },
+    {
+      "id": "hand_meet",
+      "path": "handwritten/hand_meet.png",
+      "category": "handwritten",
+      "language": "en",
+      "text": "Meet me at noon",
+      "style": "clean",
+      "synthetic": true
+    },
+    {
+      "id": "hand_notes",
+      "path": "handwritten/hand_notes.png",
+      "category": "handwritten",
+      "language": "en",
+      "text": "Revise chapter three",
+      "style": "clean",
+      "synthetic": true
+    },
+    {
+      "id": "blank",
+      "path": "degraded/blank.png",
+      "category": "degraded",
+      "language": "en",
+      "text": "",
+      "style": "clean",
+      "synthetic": true
+    },
+    {
+      "id": "dark",
+      "path": "degraded/dark.png",
+      "category": "degraded",
+      "language": "en",
+      "text": "Room 204",
+      "style": "dark",
+      "synthetic": true
+    },
+    {
+      "id": "hindi_room",
+      "path": "multilingual/hindi_room.png",
+      "category": "multilingual",
+      "language": "hi",
+      "text": "कमरा संख्या 204",
+      "style": "clean",
+      "synthetic": true
+    },
+    {
+      "id": "hindi_welcome",
+      "path": "multilingual/hindi_welcome.png",
+      "category": "multilingual",
+      "language": "hi",
+      "text": "स्वागत है",
+      "style": "clean",
+      "synthetic": true
+    },
+    {
+      "id": "kannada_room",
+      "path": "multilingual/kannada_room.png",
+      "category": "multilingual",
+      "language": "kn",
+      "text": "ಕೊಠಡಿ ಸಂಖ್ಯೆ 204",
+      "style": "clean",
+      "synthetic": true
+    },
+    {
+      "id": "kannada_welcome",
+      "path": "multilingual/kannada_welcome.png",
+      "category": "multilingual",
+      "language": "kn",
+      "text": "ಸ್ವಾಗತ",
+      "style": "clean",
+      "synthetic": true
+    }
+  ]
+}
