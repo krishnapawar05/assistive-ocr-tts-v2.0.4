@@ -2,7 +2,7 @@
   "camera": {
     "source_type": "opencv",
     "camera_id": 0,
-    "resolution": "1080p",
+    "resolution": "720p",
     "resolutions": {
       "720p": [
         1280,
@@ -46,7 +46,7 @@
     }
   },
   "ocr": {
-    "engine": "tesseract",
+    "engine": "easyocr",
     "mode": "fallback",
     "fallback_order": [
       "easyocr",
@@ -174,7 +174,7 @@
     "language": "en",
     "coqui_model": "tts_models/en/vctk/vits",
     "voice": "p335",
-    "speed": 1,
+    "speed": 1.0,
     "volume": 0.9,
     "max_chars": 300,
     "engines": {

@@ -1,202 +1,184 @@
 # app.py
-import uvicorn
-from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 import logging
 import os
+import sys
+from contextlib import asynccontextmanager
 
-from core.config import Config
-from core.pipeline import AssistivePipeline
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from core.camera.base import CameraError
+from core.camera.opencv_camera import create_camera
+from core.config import Config, ConfigError
+from core.offline import apply_offline_env
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+CONFIG_PATH = os.environ.get("SVA_CONFIG") or os.path.join(BASE_DIR, "config.json")
+
 try:
-    from core.ocr_engine import TESSER_AVAILABLE
-except ImportError:
-    TESSER_AVAILABLE = False
+    cfg = Config(CONFIG_PATH)
+except ConfigError as e:
+    logging.basicConfig(level=logging.ERROR)
+    logging.getLogger("assistive_app").error("%s\nFix %s and restart.", e, CONFIG_PATH)
+    sys.exit(2)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, cfg.data["app"]["log_level"]),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger("assistive_app")
+apply_offline_env(cfg.data["app"]["offline_mode"])  # before any model library is imported
 
-app = FastAPI(title="Assistive OCR→TTS")
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+from core.frame.processing import FrameError  # noqa: E402
+from core.pipeline import AssistivePipeline  # noqa: E402
+
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    yield
+    pipeline.shutdown()  # stop camera, OCR workers and audio on server exit
+
+
+app = FastAPI(title="Assistive OCR→TTS", lifespan=lifespan)
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
-cfg = Config(os.path.join(BASE_DIR, "config.json"))
 pipeline = AssistivePipeline(cfg)
+
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    voices = []
-    if pipeline.tts.coqui and hasattr(pipeline.tts.coqui, 'speakers') and pipeline.tts.coqui.speakers:
-        voices = pipeline.tts.coqui.speakers
-    return templates.TemplateResponse("dashboard.html", {"request": request, "config": cfg.data, "voices": voices})
+    return templates.TemplateResponse(request, "dashboard.html", {"config": cfg.data, "voices": pipeline.voices()})
+
 
 @app.post("/api/start")
 async def api_start():
     pipeline.start()
     return JSONResponse({"status": "started", "pipeline": pipeline.get_status()})
 
+
 @app.post("/api/stop")
 async def api_stop():
     pipeline.stop()
     return JSONResponse({"status": "stopped", "pipeline": pipeline.get_status()})
 
+
 @app.get("/api/status")
 async def api_status():
     return JSONResponse({"status": "ok", "pipeline": pipeline.get_status()})
+
 
 @app.get("/api/history")
 async def api_history():
     return JSONResponse({"history": pipeline.get_history()})
 
+
 @app.get("/api/config")
 async def api_get_config():
     return JSONResponse(cfg.data)
 
+
 @app.post("/api/config")
-async def api_update_config(payload: dict):
+def api_update_config(payload: dict):
     global pipeline
-    cfg.update(payload)
-    pipeline.stop()
+    try:
+        cfg.update(payload)
+    except ConfigError as e:
+        return JSONResponse({"status": "error", "message": "Invalid configuration", "errors": e.errors},
+                            status_code=400)
+    was_running = pipeline.running
+    pipeline.shutdown()
     pipeline = AssistivePipeline(cfg)
-    pipeline.start()
+    if was_running:
+        pipeline.start()
     return JSONResponse({"status": "saved", "config": cfg.data})
 
 
 @app.post("/api/speak")
 async def api_speak(payload: dict):
     text = payload.get("text", "")
-    if text:
-        pipeline.tts.speak(text,
-                          voice=cfg.data["tts"].get("voice"),
-                          speed=cfg.data["tts"].get("speed",1.0),
-                          volume=cfg.data["tts"].get("volume",0.9))
-        return JSONResponse({"status": "speaking"})
-    return JSONResponse({"status": "error", "message": "no text"}, status_code=400)
+    if not isinstance(text, str) or not text.strip():
+        return JSONResponse({"status": "error", "message": "no text"}, status_code=400)
+    result = pipeline.speak(text)
+    if result in ("queued", "interrupting"):
+        return JSONResponse({"status": "speaking", "audio": result})
+    return JSONResponse({"status": "error", "message": f"speech not accepted ({result})"}, status_code=503)
+
 
 @app.get("/api/replay")
 async def api_replay():
-    # return last audio file if available
-    last = pipeline.tts.last_audio_path
-    if last and os.path.exists(last):
-        return FileResponse(last, media_type="audio/wav", filename="last_audio.wav")
-    return JSONResponse({"status":"no_audio"}, status_code=404)
+    wav = pipeline.last_audio_wav()
+    if wav:
+        return Response(content=wav, media_type="audio/wav",
+                        headers={"Content-Disposition": 'inline; filename="last_audio.wav"'})
+    return JSONResponse({"status": "no_audio", "message": "No synthesized audio yet (replay needs Coqui TTS)"},
+                        status_code=404)
+
+
+def _grab_frame():
+    """Read one frame for diagnostics. The pipeline owns the camera while it is running."""
+    if pipeline.running:
+        raise CameraError("camera is in use by the running pipeline; stop it first")
+    camera = create_camera(cfg.data["camera"])
+    camera.open()
+    try:
+        frame = camera.read()
+    finally:
+        camera.close()
+    if frame is None:
+        raise CameraError("camera opened but returned no frame")
+    return frame
+
 
 @app.get("/api/test-camera")
-async def api_test_camera():
+def api_test_camera():
     """Test if camera is accessible and can capture frames."""
-    import cv2
     try:
-        cam_id = cfg.data["camera"].get("camera_id", 0)
-        cap = cv2.VideoCapture(cam_id)
-        if not cap.isOpened():
-            return JSONResponse({"status": "error", "message": f"Camera {cam_id} cannot be opened"})
-        ret, frame = cap.read()
-        cap.release()
-        if ret and frame is not None:
-            return JSONResponse({
-                "status": "ok", 
-                "message": f"Camera {cam_id} working",
-                "frame_shape": list(frame.shape)
-            })
-        else:
-            return JSONResponse({"status": "error", "message": "Camera opened but cannot read frames"})
-    except Exception as e:
-        logger.exception("Camera test failed")
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+        frame = _grab_frame()
+    except CameraError as e:
+        return JSONResponse({"status": "error", "message": str(e)})
+    return JSONResponse({"status": "ok", "message": f"Camera {cfg.data['camera']['camera_id']} working",
+                         "frame_shape": list(frame.shape)})
+
 
 @app.get("/api/test-ocr")
-async def api_test_ocr():
-    """Test OCR engine initialization - optimized version."""
-    # Check Tesseract availability
-    tesseract_module_available = False
-    tesseract_executable_available = False
-    tesseract_error = None
-    
+def api_test_ocr():
+    """Report every OCR/TTS engine's status and run OCR once on a camera frame if possible."""
+    diag = pipeline.diagnostics()
+    frame_result = None
     try:
-        import pytesseract
-        tesseract_module_available = True
-        try:
-            pytesseract.get_tesseract_version()
-            tesseract_executable_available = True
-        except Exception as e:
-            tesseract_executable_available = False
-            tesseract_error = f"Module installed but executable not found: {str(e)}"
-    except ImportError as e:
-        tesseract_module_available = False
-        tesseract_error = f"Module not installed: {str(e)}"
-    except Exception as e:
-        tesseract_error = f"Unexpected error: {str(e)}"
-    
-    # Simplified engines (only Tesseract now)
-    engines = {
-        "tesseract": tesseract_module_available and tesseract_executable_available
-    }
-    
-    # Test Tesseract with a simple image
-    tesseract_works = False
-    tesseract_test_result = ""
-    if tesseract_module_available and tesseract_executable_available:
-        try:
-            import cv2
-            import numpy as np
-            test_img = np.ones((100, 300, 3), dtype=np.uint8) * 255
-            cv2.putText(test_img, "TEST", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-            test_text = pytesseract.image_to_string(test_img, config=r'--oem 3 --psm 6').strip()
-            tesseract_works = len(test_text) > 0
-            tesseract_test_result = test_text if test_text else "No text detected from test image"
-        except Exception as e:
-            logger.error("Tesseract test failed: %s", e)
-            tesseract_test_result = f"Error: {str(e)}"
-    elif tesseract_error:
-        tesseract_test_result = tesseract_error
-    
-    # Test OCR on a real camera frame if available
-    ocr_test_result = None
-    try:
-        import cv2
-        cam_id = cfg.data["camera"].get("camera_id", 0)
-        cap = cv2.VideoCapture(cam_id)
-        if cap.isOpened():
-            ret, frame = cap.read()
-            cap.release()
-            if ret and frame is not None:
-                ocr_res = pipeline.ocr.extract_text(frame)
-                ocr_test_result = {
-                    "text": ocr_res.text[:100] if ocr_res.text else "",
-                    "engine": ocr_res.engine,
-                    "confidence": ocr_res.confidence,
-                    "length": len(ocr_res.text) if ocr_res.text else 0
-                }
-    except Exception as e:
-        logger.error("OCR test on camera frame failed: %s", e)
-        ocr_test_result = {"error": str(e)}
-    
+        frame = _grab_frame()
+        report = pipeline.quality.assess(frame)
+        decision = pipeline.ocr.recognize(pipeline.preprocessor.prepare(frame))
+        frame_result = {
+            "text": decision.text[:100],
+            "engine": decision.winner.result.engine if decision.winner else "",
+            "confidence": round(decision.winner.result.confidence, 3) if decision.winner else 0.0,
+            "score": round(decision.winner.final_score, 3) if decision.winner else 0.0,
+            "reason": decision.reason,
+            "engines_run": decision.engines_run,
+            "errors": decision.errors,
+            "frame_quality": {"usable": report.usable, "reasons": report.reasons},
+        }
+    except (CameraError, FrameError) as e:
+        frame_result = {"error": str(e)}
+    ocr_cfg = cfg.data["ocr"]
     return JSONResponse({
         "status": "ok",
-        "engines": engines,
-        "tesseract_works": tesseract_works,
-        "tesseract_test_result": tesseract_test_result,
-        "tesseract_error": tesseract_error,
-        "ocr_test_on_frame": ocr_test_result,
-        "config": {
-            "min_confidence": pipeline.ocr.min_confidence,
-            "min_text_len": pipeline.ocr.min_text_len
-        },
-        "diagnostics": {
-            "tesseract_module": tesseract_module_available,
-            "tesseract_executable": tesseract_executable_available
-        },
-        "initialization_info": {
-            "tesseract": "Tesseract is ready" if tesseract_executable_available else "Tesseract not available - install: pip install pytesseract and Tesseract OCR executable"
-        }
+        "engines": {name: d["status"] == "READY" for name, d in diag["ocr_engines"].items()},
+        "ocr_engines": diag["ocr_engines"],
+        "tts_engines": diag["tts_engines"],
+        "ocr_test_on_frame": frame_result,
+        "config": {"mode": ocr_cfg["mode"], "engine": ocr_cfg["engine"],
+                   "min_confidence": ocr_cfg["min_confidence"], "min_text_len": ocr_cfg["min_text_len"]},
     })
 
+
 if __name__ == "__main__":
-    # Create templates directory if missing (templates provided separately)
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)

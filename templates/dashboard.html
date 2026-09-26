@@ -61,19 +61,27 @@
             <div class="mb-3">
               <label for="ocrEngine" class="form-label">OCR Engine</label>
               <select id="ocrEngine" name="ocr_engine" class="form-select" aria-label="OCR engine select">
-                <option value="paddle">PaddleOCR (Recommended)</option>
-                <option value="tesseract">Tesseract (Fallback)</option>
-                <option value="easyocr">EasyOCR (Handwriting)</option>
-                <option value="trocr">TrOCR (Handwriting)</option>
+                <option value="easyocr">EasyOCR</option>
+                <option value="paddle">PaddleOCR</option>
+                <option value="tesseract">Tesseract</option>
+                <option value="trocr">TrOCR (handwriting)</option>
               </select>
-              <small class="form-text text-muted">Select the OCR engine to use</small>
+              <small class="form-text text-muted">Primary engine; unavailable engines are skipped automatically</small>
+            </div>
+            <div class="mb-3">
+              <label for="ocrMode" class="form-label">Engine Mode</label>
+              <select id="ocrMode" name="mode" class="form-select">
+                <option value="single_engine">Single engine (fastest)</option>
+                <option value="fallback">Fallback (next engine only if unsure)</option>
+                <option value="ensemble">Ensemble (all engines, slowest)</option>
+              </select>
             </div>
             <div class="mb-3">
               <label for="ocrLang" class="form-label">Language</label>
               <select id="ocrLang" name="language" class="form-select">
-                <option value="eng">English</option>
-                <option value="hin">Hindi</option>
-                <option value="kan">Kannada</option>
+                <option value="en">English</option>
+                <option value="hi">Hindi</option>
+                <option value="kn">Kannada</option>
               </select>
             </div>
             <div class="mb-3">
@@ -104,28 +112,6 @@
                      class="form-range" min="1" max="20" step="1" 
                      value="{{ config['ocr'].get('min_text_len', 3) }}">
             </div>
-            <div class="mb-3 form-check">
-              <input type="checkbox" class="form-check-input" id="parallelOcr" name="parallel_ocr" 
-                     {% if config['ocr'].get('parallel_ocr', True) %}checked{% endif %}>
-              <label class="form-check-label" for="parallelOcr">
-                Parallel OCR Processing
-              </label>
-              <small class="form-text text-muted d-block">Run multiple engines simultaneously</small>
-            </div>
-            <div class="mb-3 form-check">
-              <input type="checkbox" class="form-check-input" id="useTrocr" name="use_trocr" 
-                     {% if config['ocr'].get('use_trocr', True) %}checked{% endif %}>
-              <label class="form-check-label" for="useTrocr">
-                Enable TrOCR (Handwriting)
-              </label>
-            </div>
-            <div class="mb-3 form-check">
-              <input type="checkbox" class="form-check-input" id="handwritingFallback" name="handwriting_fallback" 
-                     {% if config['ocr'].get('handwriting_fallback', True) %}checked{% endif %}>
-              <label class="form-check-label" for="handwritingFallback">
-                EasyOCR Fallback
-              </label>
-            </div>
             <button type="submit" class="btn btn-primary w-100" id="saveOcr">
               💾 Save OCR Settings
             </button>
@@ -144,6 +130,7 @@
               <label for="ttsEngine" class="form-label">TTS Engine</label>
               <select id="ttsEngine" name="tts_engine" class="form-select">
                 <option value="coqui">Coqui TTS</option>
+                <option value="windows">Windows Speech</option>
                 <option value="espeak">espeak-ng</option>
               </select>
             </div>
@@ -193,7 +180,6 @@
               <select id="cameraSource" name="source_type" class="form-select">
                 <option value="opencv">OpenCV</option>
                 <option value="gstreamer">GStreamer (nvarguscamerasrc)</option>
-                <option value="arducam">ArduCam SDK</option>
               </select>
             </div>
             <div class="mb-3">

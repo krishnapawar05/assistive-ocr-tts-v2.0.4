@@ -58,7 +58,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "ocr": {
         "engine": "easyocr",               # primary engine
         "mode": "fallback",                # single_engine | fallback | ensemble
-        "fallback_order": ["paddle", "tesseract", "trocr"],
+        "fallback_order": ["easyocr", "paddle", "tesseract", "trocr"],  # primary is skipped if listed
         "language": "en",
         "text_type": "printed",            # printed | handwritten
         "capture_interval": 0.2,

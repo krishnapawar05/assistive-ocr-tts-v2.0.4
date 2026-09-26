@@ -69,14 +69,12 @@ class Dashboard {
     loadConfig() {
         // Load config values into form
         if (this.config.ocr) {
-            document.getElementById('ocrEngine').value = this.config.ocr.engine || 'paddle';
-            document.getElementById('ocrLang').value = this.config.ocr.language || 'eng';
+            document.getElementById('ocrEngine').value = this.config.ocr.engine || 'easyocr';
+            document.getElementById('ocrLang').value = this.config.ocr.language || 'en';
+            document.getElementById('ocrMode').value = this.config.ocr.mode || 'fallback';
             document.getElementById('captureInterval').value = this.config.ocr.capture_interval || 0.5;
             document.getElementById('minConfidence').value = this.config.ocr.min_confidence || 0.5;
             document.getElementById('minTextLen').value = this.config.ocr.min_text_len || 3;
-            document.getElementById('parallelOcr').checked = this.config.ocr.parallel_ocr !== false;
-            document.getElementById('useTrocr').checked = this.config.ocr.use_trocr !== false;
-            document.getElementById('handwritingFallback').checked = this.config.ocr.handwriting_fallback !== false;
         }
 
         if (this.config.tts) {
@@ -174,83 +172,51 @@ class Dashboard {
         const originalText = btn.innerHTML;
         btn.disabled = true;
         btn.innerHTML = '<span class="loading-spinner"></span> Testing...';
+        // Everything from the server (including OCR text read by the camera) is escaped.
+        const esc = (t) => this.escapeHtml(String(t ?? ''));
+        const engineList = (engines) => {
+            let html = '';
+            for (const [engine, d] of Object.entries(engines || {})) {
+                const icon = d.status === 'READY' ? '✅' : (d.status === 'DISABLED' ? '⏸️' : '❌');
+                html += `${icon} ${esc(engine)}: ${esc(d.status)}`;
+                if (d.status !== 'READY' && d.detail) {
+                    html += `<br><small style="color: #666;">${esc(d.detail)}</small>`;
+                }
+                html += '<br>';
+            }
+            return html;
+        };
 
         try {
             const response = await fetch('/api/test-ocr');
             const data = await response.json();
-            
+
             if (data.status === 'ok') {
-                let message = '<strong>OCR Engines Status:</strong><br>';
-                
-                // Engine availability
-                const engines = data.engines || {};
-                for (const [engine, available] of Object.entries(engines)) {
-                    const status = available ? '✅ Available' : '❌ Unavailable';
-                    message += `${engine}: ${status}<br>`;
-                }
-                
-                // Tesseract test result
-                if (data.tesseract_works !== undefined) {
-                    message += `<br><strong>Tesseract:</strong> ${data.tesseract_works ? '✅ Working' : '❌ Not working'}`;
-                    if (data.tesseract_test_result) {
-                        message += `<br>Test result: "${data.tesseract_test_result}"`;
-                    }
-                }
-                
-                // Tesseract error details
-                if (data.tesseract_error) {
-                    message += `<br><br><strong>Tesseract Error:</strong> ❌ ${data.tesseract_error}`;
-                    message += `<br><small>Install: pip install pytesseract AND install Tesseract OCR executable</small>`;
-                }
-                
-                // Diagnostics
-                if (data.diagnostics) {
-                    message += `<br><br><strong>Detailed Diagnostics:</strong>`;
-                    message += `<br>PaddleOCR initialized: ${data.diagnostics.paddle_initialized ? '✅ Yes' : '❌ No'}`;
-                    if (!data.diagnostics.paddle_initialized && data.initialization_info) {
-                        message += `<br><small style="color: #666;">${data.initialization_info.paddle}</small>`;
-                    }
-                    message += `<br>TrOCR initialized: ${data.diagnostics.trocr_initialized ? '✅ Yes' : '❌ No'}`;
-                    if (!data.diagnostics.trocr_initialized && data.initialization_info) {
-                        message += `<br><small style="color: #666;">${data.initialization_info.trocr}</small>`;
-                    }
-                    message += `<br>EasyOCR initialized: ${data.diagnostics.easyocr_initialized ? '✅ Yes' : '❌ No'}`;
-                    message += `<br>Tesseract module: ${data.diagnostics.tesseract_module ? '✅ Installed' : '❌ Not installed'}`;
-                    message += `<br>Tesseract executable: ${data.diagnostics.tesseract_executable ? '✅ Available' : '❌ Not found'}`;
-                }
-                
-                // Initialization errors
-                if (data.initialization_errors) {
-                    const errors = Object.entries(data.initialization_errors).filter(([_, msg]) => msg);
-                    if (errors.length > 0) {
-                        message += `<br><br><strong>⚠️ Initialization Issues:</strong>`;
-                        errors.forEach(([engine, error]) => {
-                            message += `<br>${engine}: ${error}`;
-                        });
-                    }
-                }
-                
-                // OCR test on frame
-                if (data.ocr_test_on_frame) {
-                    const ocrResult = data.ocr_test_on_frame;
-                    if (ocrResult.error) {
-                        message += `<br><br><strong>Frame OCR Test:</strong> ❌ ${ocrResult.error}`;
-                    } else if (ocrResult.text) {
-                        message += `<br><br><strong>Frame OCR Test:</strong> ✅ Detected "${ocrResult.text.substring(0, 50)}..."`;
-                        message += `<br>Engine: ${ocrResult.engine}, Confidence: ${(ocrResult.confidence * 100).toFixed(1)}%`;
+                let message = '<strong>OCR Engines:</strong><br>' + engineList(data.ocr_engines);
+                message += '<br><strong>TTS Engines:</strong><br>' + engineList(data.tts_engines);
+
+                const r = data.ocr_test_on_frame;
+                if (r) {
+                    if (r.error) {
+                        message += `<br><strong>Frame OCR Test:</strong> ❌ ${esc(r.error)}`;
+                    } else if (r.text) {
+                        message += `<br><strong>Frame OCR Test:</strong> ✅ Detected "${esc(r.text.substring(0, 50))}"`;
+                        message += `<br>Engine: ${esc(r.engine)}, Confidence: ${(r.confidence * 100).toFixed(1)}%, Score: ${(r.score * 100).toFixed(1)}%`;
                     } else {
-                        message += `<br><br><strong>Frame OCR Test:</strong> ⚠️ No text detected`;
+                        message += `<br><strong>Frame OCR Test:</strong> ⚠️ No text accepted (${esc(r.reason)})`;
+                        if (r.frame_quality && !r.frame_quality.usable) {
+                            message += `<br>Frame quality: ${esc(r.frame_quality.reasons.join(', '))}`;
+                        }
                     }
                 }
-                
-                // Config info
+
                 if (data.config) {
                     message += `<br><br><strong>Current Config:</strong>`;
-                    message += `<br>Min Confidence: ${data.config.min_confidence}`;
-                    message += `<br>Min Text Length: ${data.config.min_text_len}`;
-                    message += `<br>Parallel OCR: ${data.config.parallel_ocr ? 'Yes' : 'No'}`;
+                    message += `<br>Mode: ${esc(data.config.mode)}, Primary engine: ${esc(data.config.engine)}`;
+                    message += `<br>Min Confidence: ${esc(data.config.min_confidence)}`;
+                    message += `<br>Min Text Length: ${esc(data.config.min_text_len)}`;
                 }
-                
+
                 this.showAlert('info', message, true);
             } else {
                 this.showAlert('danger', `OCR test failed: ${data.message || 'Unknown error'}`);
@@ -261,6 +227,11 @@ class Dashboard {
             btn.disabled = false;
             btn.innerHTML = originalText;
         }
+    }
+
+    configError(data, what) {
+        const details = (data.errors || []).join('; ');
+        this.showAlert('danger', `Failed to save ${what}${details ? ': ' + details : ''}`);
     }
 
     async saveOCRConfig(e) {
@@ -278,9 +249,7 @@ class Dashboard {
                     capture_interval: parseFloat(document.getElementById('captureInterval').value),
                     min_confidence: parseFloat(document.getElementById('minConfidence').value),
                     min_text_len: parseInt(document.getElementById('minTextLen').value),
-                    parallel_ocr: document.getElementById('parallelOcr').checked,
-                    use_trocr: document.getElementById('useTrocr').checked,
-                    handwriting_fallback: document.getElementById('handwritingFallback').checked
+                    mode: document.getElementById('ocrMode').value
                 }
             };
 
@@ -295,7 +264,7 @@ class Dashboard {
                 this.config.ocr = payload.ocr;
                 this.showAlert('success', 'OCR settings saved successfully! Pipeline will restart.');
             } else {
-                this.showAlert('danger', 'Failed to save OCR settings');
+                this.configError(data, 'OCR settings');
             }
         } catch (error) {
             this.showAlert('danger', `Error saving OCR settings: ${error.message}`);
@@ -333,7 +302,7 @@ class Dashboard {
                 this.config.tts = payload.tts;
                 this.showAlert('success', 'TTS settings saved successfully!');
             } else {
-                this.showAlert('danger', 'Failed to save TTS settings');
+                this.configError(data, 'TTS settings');
             }
         } catch (error) {
             this.showAlert('danger', `Error saving TTS settings: ${error.message}`);
@@ -370,7 +339,7 @@ class Dashboard {
                 this.config.camera = payload.camera;
                 this.showAlert('success', 'Camera settings saved successfully! Pipeline will restart.');
             } else {
-                this.showAlert('danger', 'Failed to save camera settings');
+                this.configError(data, 'camera settings');
             }
         } catch (error) {
             this.showAlert('danger', `Error saving camera settings: ${error.message}`);
