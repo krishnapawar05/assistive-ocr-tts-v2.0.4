@@ -95,6 +95,14 @@ class AudioManager:
             self._cond.notify_all()
         return outcome
 
+    def clear(self) -> None:
+        """Drop queued speech and stop the current utterance (worker keeps running)."""
+        with self._cond:
+            self._queue.clear()
+            if self._speaking is not None:
+                self._stop()
+            self._cond.notify_all()
+
     @property
     def is_speaking(self) -> bool:
         return self._speaking is not None
