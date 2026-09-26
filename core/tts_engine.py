@@ -85,16 +85,19 @@ class TTSEngine:
                 cmd.append(text)
                 subprocess.run(cmd, check=False)
             elif os.name == "nt":
-                ps_voice = f'$s.SelectVoice("{voice}")' if voice else ""
+                # Text and voice are passed via environment variables, never interpolated
+                # into the script: OCR text is untrusted and would otherwise run as PowerShell.
+                # See docs/adr/0001-tts-powershell-injection.md.
+                env = dict(os.environ, SVA_TTS_TEXT=text, SVA_TTS_VOICE=voice or "")
                 ps = (
-                    f'Add-Type -AssemblyName System.Speech; '
-                    f'$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
-                    f'{ps_voice}; '
+                    'Add-Type -AssemblyName System.Speech; '
+                    '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
+                    'if ($env:SVA_TTS_VOICE) { $s.SelectVoice($env:SVA_TTS_VOICE) }; '
                     f'$s.Rate={int((speed-1)*5)}; '
                     f'$s.Volume={int(100*volume)}; '
-                    f'$s.Speak("{text}");'
+                    '$s.Speak($env:SVA_TTS_TEXT);'
                 )
-                subprocess.run(["powershell", "-Command", ps], check=False)
+                subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=False, env=env)
             else:
                 print(text)
         except Exception as e:
