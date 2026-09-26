@@ -97,6 +97,42 @@ class AppAPITest(unittest.TestCase):
         self.assertEqual(self.client.post("/api/stop").json()["status"], "stopped")
         self.assertEqual(self.app_module.pipeline.threads_alive(), ["audio"])
 
+    def test_requests_during_reload_get_503(self):
+        live = self.app_module.pipeline
+        self.app_module.pipeline = None  # what a reload looks like from other requests
+        try:
+            for method, path in (("get", "/api/status"), ("get", "/api/history"), ("post", "/api/start"),
+                                 ("get", "/api/test-ocr")):
+                with self.subTest(path=path):
+                    self.assertEqual(getattr(self.client, method)(path).status_code, 503)
+        finally:
+            self.app_module.pipeline = live
+
+    def test_concurrent_reload_rejected(self):
+        lock = self.app_module._reload_lock
+        lock.acquire()
+        try:
+            r = self.client.post("/api/config", json={"tts": {"speed": 1.1}})
+            self.assertEqual(r.status_code, 409)
+        finally:
+            lock.release()
+
+    def test_zz_valid_config_reload_rebuilds_pipeline(self):
+        import gc
+        import weakref
+        old = self.app_module.pipeline
+        old_ref = weakref.ref(old)
+        old_threads = [t for t in (old._process_thread, old.audio._thread) if t is not None]
+        del old
+        r = self.client.post("/api/config", json={"ocr": {"min_confidence": 0.55}})
+        self.assertEqual(r.json()["status"], "saved")
+        new = self.app_module.pipeline
+        self.assertEqual(new.cfg["ocr"]["min_confidence"], 0.55)
+        self.assertTrue(all(not t.is_alive() for t in old_threads))
+        gc.collect()
+        self.assertIsNone(old_ref(), "old pipeline (and its models) still referenced after reload")
+        self.assertEqual(self.client.get("/api/status").status_code, 200)
+
     def test_history(self):
         self.assertIn("history", self.client.get("/api/history").json())
 
