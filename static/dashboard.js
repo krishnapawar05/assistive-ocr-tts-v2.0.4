@@ -172,61 +172,109 @@ class Dashboard {
         const originalText = btn.innerHTML;
         btn.disabled = true;
         btn.innerHTML = '<span class="loading-spinner"></span> Testing...';
-        // Everything from the server (including OCR text read by the camera) is escaped.
-        const esc = (t) => this.escapeHtml(String(t ?? ''));
+        try {
+            const response = await fetch('/api/test-ocr');
+            const data = await response.json();
+            if (data.status === 'ok') {
+                this.showAlert('info', Dashboard.formatOcrTest(data), true);
+            } else {
+                this.showAlert('danger', `OCR test failed: ${this.escapeHtml(data.message || data.detail || 'Unknown error')}`);
+            }
+        } catch (error) {
+            this.showAlert('danger', `Error testing OCR: ${this.escapeHtml(error.message)}`);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    }
+
+    /** HTML for a /api/test-ocr response. Pure (no DOM) so it is unit-tested under Node.
+     *  Everything from the server, including OCR text read by the camera, is escaped. */
+    static formatOcrTest(data) {
+        const esc = (t) => String(t ?? '').replace(/[&<>"']/g,
+            (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+        const pct = (x) => `${(Number(x) * 100).toFixed(1)}%`;
+        const cfg = data.config || {};
+        const ocrEngines = data.ocr_engines || {};
         const engineList = (engines) => {
             let html = '';
             for (const [engine, d] of Object.entries(engines || {})) {
-                const icon = d.status === 'READY' ? '✅' : (d.status === 'DISABLED' ? '⏸️' : '❌');
-                html += `${icon} ${esc(engine)}: ${esc(d.status)}`;
-                if (d.status !== 'READY' && d.detail) {
+                let icon = '❌';
+                let label = d.status;
+                if (d.status === 'READY') icon = '✅';
+                else if (d.status === 'DISABLED') icon = '⏸️';
+                else if (d.status === 'UNINITIALIZED') { icon = '⏳'; label = 'not loaded yet (loads on first use)'; }
+                html += `${icon} ${esc(engine)}: ${esc(label)}`;
+                if (!['READY', 'UNINITIALIZED'].includes(d.status) && d.detail) {
                     html += `<br><small style="color: #666;">${esc(d.detail)}</small>`;
                 }
                 html += '<br>';
             }
             return html;
         };
+        const REASONS = {
+            no_text: 'OCR ran but found no text in the frame',
+            below_min_confidence: 'text was found, but its confidence was below Min Confidence',
+            below_threshold: 'text was found, but it was rejected by quality scoring',
+            no_engine_available: 'no OCR engine is available',
+            all_engines_failed: 'every OCR engine that ran failed',
+        };
 
-        try {
-            const response = await fetch('/api/test-ocr');
-            const data = await response.json();
+        let message = '<strong>OCR Engines:</strong><br>' + engineList(ocrEngines);
+        message += '<br><strong>TTS Engines:</strong><br>' + engineList(data.tts_engines);
 
-            if (data.status === 'ok') {
-                let message = '<strong>OCR Engines:</strong><br>' + engineList(data.ocr_engines);
-                message += '<br><strong>TTS Engines:</strong><br>' + engineList(data.tts_engines);
-
-                const r = data.ocr_test_on_frame;
-                if (r) {
-                    if (r.error) {
-                        message += `<br><strong>Frame OCR Test:</strong> ❌ ${esc(r.error)}`;
-                    } else if (r.text) {
-                        message += `<br><strong>Frame OCR Test:</strong> ✅ Detected "${esc(r.text.substring(0, 50))}"`;
-                        message += `<br>Engine: ${esc(r.engine)}, Confidence: ${(r.confidence * 100).toFixed(1)}%, Score: ${(r.score * 100).toFixed(1)}%`;
-                    } else {
-                        message += `<br><strong>Frame OCR Test:</strong> ⚠️ No text accepted (${esc(r.reason)})`;
-                        if (r.frame_quality && !r.frame_quality.usable) {
-                            message += `<br>Frame quality: ${esc(r.frame_quality.reasons.join(', '))}`;
-                        }
+        const r = data.ocr_test_on_frame;
+        if (r) {
+            message += '<br><strong>Frame OCR Test:</strong> ';
+            if (r.error) {
+                message += `❌ No usable camera frame: ${esc(r.error)}`;
+            } else {
+                if (r.text) {
+                    message += `✅ Detected "${esc(r.text.substring(0, 50))}"`;
+                    message += `<br>Engine used: ${esc(r.engine)}, Confidence: ${pct(r.confidence)}, Score: ${pct(r.score)}`;
+                } else {
+                    message += `⚠️ No text accepted: ${esc(REASONS[r.reason] || r.reason)}`;
+                    for (const [engine, conf] of Object.entries(r.low_confidence || {})) {
+                        message += `<br>${esc(engine)} confidence ${pct(conf)} &lt; Min Confidence ${pct(cfg.min_confidence)}`;
+                    }
+                    for (const c of r.candidates || []) {
+                        message += `<br>${esc(c.engine)} read "${esc(c.text.substring(0, 50))}" with score ${pct(c.score)}`
+                                 + (cfg.min_final_score !== undefined ? ` (needs ${pct(cfg.min_final_score)})` : '');
+                    }
+                    for (const [engine, code] of Object.entries(r.errors || {})) {
+                        message += `<br>${esc(engine)} error: ${esc(code)}`;
                     }
                 }
-
-                if (data.config) {
-                    message += `<br><br><strong>Current Config:</strong>`;
-                    message += `<br>Mode: ${esc(data.config.mode)}, Primary engine: ${esc(data.config.engine)}`;
-                    message += `<br>Min Confidence: ${esc(data.config.min_confidence)}`;
-                    message += `<br>Min Text Length: ${esc(data.config.min_text_len)}`;
+                const SKIPPED = {
+                    no_text_region: 'no text region was found by EasyOCR/PaddleOCR, so it was not run',
+                    no_region_source: 'it needs EasyOCR or PaddleOCR to find text regions first',
+                };
+                for (const [engine, why] of Object.entries(r.skipped || {})) {
+                    message += `<br>${esc(engine)} skipped: ${esc(SKIPPED[why] || why)}`;
                 }
-
-                this.showAlert('info', message, true);
-            } else {
-                this.showAlert('danger', `OCR test failed: ${data.message || 'Unknown error'}`);
+                const primary = cfg.engine;
+                const primaryStatus = (ocrEngines[primary] || {}).status;
+                if (primary && !(r.engines_run || []).includes(primary)) {
+                    message += `<br>ℹ️ Primary engine ${esc(primary)} was skipped (${esc(primaryStatus || 'unknown')})`;
+                    message += `; engines tried: ${esc((r.engines_run || []).join(', ') || 'none')}`;
+                } else if (r.engines_run && r.engines_run.length) {
+                    message += `<br>Engines tried: ${esc(r.engines_run.join(', '))}`;
+                }
+                if (r.frame) {
+                    message += `<br>Frame: ${esc(r.frame.shape.join('×'))}, mean brightness ${esc(r.frame.mean)}`;
+                }
+                if (r.latency_s !== undefined) message += `, OCR time ${esc(r.latency_s)}s`;
+                if (r.frame_quality && !r.frame_quality.usable) {
+                    message += `<br>Frame quality: ${esc(r.frame_quality.reasons.join(', '))} (the live pipeline would skip this frame)`;
+                }
             }
-        } catch (error) {
-            this.showAlert('danger', `Error testing OCR: ${error.message}`);
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = originalText;
         }
+
+        message += '<br><br><strong>Current Config:</strong>';
+        message += `<br>Mode: ${esc(cfg.mode)}, Primary engine: ${esc(cfg.engine)}`;
+        message += `<br>Min Confidence: ${esc(cfg.min_confidence)}`;
+        message += `<br>Min Text Length: ${esc(cfg.min_text_len)}`;
+        return message;
     }
 
     configError(data, what) {
@@ -349,6 +397,21 @@ class Dashboard {
         }
     }
 
+    async refreshCameraPreview() {
+        const previewImg = document.getElementById('cameraPreview');
+        if (!previewImg) return;
+        // Fetch new snapshot with timestamp cache-buster
+        const newImg = new Image();
+        newImg.onload = () => {
+            previewImg.src = newImg.src;
+            previewImg.style.opacity = '1.0';
+        };
+        newImg.onerror = () => {
+            previewImg.style.opacity = '0.5';
+        };
+        newImg.src = `/api/camera/snapshot?t=${Date.now()}`;
+    }
+
     async updateStatus() {
         try {
             const response = await fetch('/api/status');
@@ -358,11 +421,45 @@ class Dashboard {
                 this.isRunning = data.pipeline.running || false;
                 this.updateStatusBadge(this.isRunning);
                 
+                // Update live camera preview if running or viewfinder exists
+                if (this.isRunning) {
+                    this.refreshCameraPreview();
+                }
+
+                // Update motion badge
+                const motionBadge = document.getElementById('motionBadge');
+                if (motionBadge && data.pipeline.motion) {
+                    if (data.pipeline.motion.is_moving) {
+                        motionBadge.textContent = `Moving (${data.pipeline.motion.motion_score})`;
+                        motionBadge.className = 'badge bg-warning text-dark me-2';
+                    } else {
+                        motionBadge.textContent = 'Still (Holding)';
+                        motionBadge.className = 'badge bg-success me-2';
+                    }
+                }
+
+                // Update pipeline status overlay
+                const statusOverlay = document.getElementById('cameraStatusOverlay');
+                const pipelineDetails = document.getElementById('pipelineDetails');
+                const outcome = data.pipeline.last_outcome;
+                const statusMsg = outcome ? outcome.replace('_', ' ').toUpperCase() : (this.isRunning ? 'STREAMING' : 'READY');
+                if (statusOverlay) statusOverlay.textContent = `Status: ${statusMsg}`;
+                if (pipelineDetails) {
+                    pipelineDetails.textContent = `Pipeline: ${statusMsg} | Frames: ${data.pipeline.frames_processed || 0}`;
+                }
+
                 if (data.pipeline.last_text) {
                     const output = document.getElementById('ocrOutput');
-                    output.textContent = data.pipeline.last_text;
-                    output.classList.add('fade-in');
-                    setTimeout(() => output.classList.remove('fade-in'), 300);
+                    if (output.textContent !== data.pipeline.last_text) {
+                        output.textContent = data.pipeline.last_text;
+                        output.classList.add('fade-in');
+                        setTimeout(() => output.classList.remove('fade-in'), 300);
+                    }
+                } else if (this.isRunning && outcome === 'camera_moving') {
+                    const output = document.getElementById('ocrOutput');
+                    if (output.textContent.includes('Waiting')) {
+                        output.textContent = 'Camera is moving... Hold steady to read text.';
+                    }
                 }
             }
         } catch (error) {

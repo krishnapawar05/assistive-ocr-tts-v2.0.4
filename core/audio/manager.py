@@ -22,18 +22,25 @@ class SpeechRequest:
     text: str
     source: str = "ocr"
     created: float = field(default_factory=time.monotonic)
+    frame_seq_id: int = 0
+    capture_timestamp: float = 0.0
+    scene_token: str = ""
 
 
 class AudioManager:
     def __init__(self, cfg: Dict, speak_fn: Callable[[str], object], stop_fn: Callable[[], None],
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 is_stale_fn: Optional[Callable[[SpeechRequest], bool]] = None):
         self.policy = cfg["policy"]
         self.max_queue_size = int(cfg["max_queue_size"])
         self.max_age_s = float(cfg["max_age_s"])
+        self.max_frame_age_s = float(cfg.get("max_frame_age_s", 5.0))
         self.shutdown_timeout_s = float(cfg["shutdown_timeout_s"])
         self._speak = speak_fn
         self._stop = stop_fn
         self._clock = clock
+        self._is_stale_fn = is_stale_fn
+        self._active_scene_token: str = ""
         self._queue: Deque[SpeechRequest] = deque()
         self._cond = threading.Condition()
         self._speaking: Optional[SpeechRequest] = None
@@ -69,9 +76,11 @@ class AudioManager:
         return True
 
     # ----- requests ----------------------------------------------------------------------------
-    def submit(self, text: str, source: str = "ocr") -> str:
+    def submit(self, text: str, source: str = "ocr", frame_seq_id: int = 0,
+               capture_timestamp: float = 0.0, scene_token: str = "") -> str:
         """Apply the policy to a new request. Returns what happened to it."""
-        req = SpeechRequest(text, source, self._clock())
+        req = SpeechRequest(text, source, self._clock(), frame_seq_id=frame_seq_id,
+                            capture_timestamp=capture_timestamp, scene_token=scene_token)
         with self._cond:
             if not self._running:
                 return "rejected_stopped"
@@ -94,6 +103,23 @@ class AudioManager:
             self._queue.append(req)
             self._cond.notify_all()
         return outcome
+
+    def invalidate_scene(self, new_scene_token: str) -> int:
+        """Invalidate queued OCR speech requests when visual scene changes.
+        
+        API speech requests are preserved. Returns number of purged requests.
+        """
+        with self._cond:
+            self._active_scene_token = new_scene_token
+            before = len(self._queue)
+            retained = deque([r for r in self._queue if r.source != "ocr" or not r.scene_token or r.scene_token == new_scene_token])
+            dropped = before - len(retained)
+            self._queue = retained
+            self.stats["dropped_stale"] += dropped
+            if dropped:
+                logger.info("invalidated %d queued speech requests due to scene shift (%s)", dropped, new_scene_token)
+            self._cond.notify_all()
+            return dropped
 
     def clear(self) -> None:
         """Drop queued speech and stop the current utterance (worker keeps running)."""
@@ -131,9 +157,25 @@ class AudioManager:
                 if not self._running:
                     return
                 req = self._queue.popleft()
-                if self._clock() - req.created > self.max_age_s:
+                now = self._clock()
+                is_stale = False
+                stale_reason = ""
+                if now - req.created > self.max_age_s:
+                    is_stale = True
+                    stale_reason = f"queue age {now - req.created:.1f}s > {self.max_age_s:.1f}s"
+                elif req.capture_timestamp > 0 and (now - req.capture_timestamp > self.max_frame_age_s):
+                    is_stale = True
+                    stale_reason = f"frame age {now - req.capture_timestamp:.1f}s > {self.max_frame_age_s:.1f}s"
+                elif self._active_scene_token and req.scene_token and (req.scene_token != self._active_scene_token):
+                    is_stale = True
+                    stale_reason = f"scene token mismatch ({req.scene_token} != {self._active_scene_token})"
+                elif self._is_stale_fn is not None and self._is_stale_fn(req):
+                    is_stale = True
+                    stale_reason = "custom stale validator"
+
+                if is_stale:
                     self.stats["dropped_stale"] += 1
-                    logger.debug("dropping stale speech request (%.1fs old)", self._clock() - req.created)
+                    logger.debug("dropping stale speech request (%s): %r", stale_reason, req.text)
                     self._cond.notify_all()
                     continue
                 self._speaking = req

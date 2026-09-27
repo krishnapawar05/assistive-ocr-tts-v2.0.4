@@ -1,15 +1,31 @@
 """HTTP API smoke tests against the real app (real engines, silent TTS, no real camera)."""
+import copy
+import hashlib
 import importlib
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
 
+import cv2
+import numpy as np
 from fastapi.testclient import TestClient
 
-from tests.helpers import default_config
+from core.ocr.service import OCRService
+from core.ocr.types import EngineStatus
+from tests.helpers import FakeOCRAdapter, default_config
+from tests.ocr.engine_case import FIXTURES, MANIFEST
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DASHBOARD_JS = os.path.join(ROOT, "static", "dashboard.js")
+
+
+def fixture(fid):
+    return cv2.imread(os.path.join(FIXTURES, MANIFEST[fid]["path"]))
 
 
 class AppAPITest(unittest.TestCase):
@@ -20,6 +36,10 @@ class AppAPITest(unittest.TestCase):
         cfg["camera"]["camera_id"] = 99            # no such device: never opens a real webcam
         cfg["camera"]["reconnect_initial_delay_s"] = 0.2
         cfg["tts"]["volume"] = 0.0
+        # The reported runtime setup: Tesseract selected as primary but not installed. The missing
+        # executable makes it NOT_AVAILABLE on every machine; EasyOCR is the configured fallback.
+        cfg["ocr"].update(engine="tesseract", mode="single_engine", fallback_order=["easyocr"])
+        cfg["ocr"]["engines"]["tesseract"]["executable"] = os.path.join(cls.tmp.name, "missing", "tesseract.exe")
         cls.config_path = os.path.join(cls.tmp.name, "config.json")
         with open(cls.config_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f)
@@ -132,6 +152,127 @@ class AppAPITest(unittest.TestCase):
         gc.collect()
         self.assertIsNone(old_ref(), "old pipeline (and its models) still referenced after reload")
         self.assertEqual(self.client.get("/api/status").status_code, 200)
+
+    # ----- Test OCR (/api/test-ocr) regression tests ----------------------------------------
+    def ocr_on(self, image):
+        """GET /api/test-ocr with the camera replaced by one in-memory image."""
+        real = self.app_module._grab_frame
+        self.app_module._grab_frame = lambda: image
+        try:
+            r = self.client.get("/api/test-ocr")
+        finally:
+            self.app_module._grab_frame = real
+        self.assertEqual(r.status_code, 200)
+        return r.json()
+
+    def swap_ocr(self, *adapters, **ocr_overrides):
+        """Replace the live pipeline's OCR service with the given adapters for one test."""
+        p = self.app_module.pipeline
+        ocr_cfg = copy.deepcopy(p.ocr.cfg)
+        ocr_cfg.update(engine=adapters[0].name, fallback_order=[a.name for a in adapters[1:]], **ocr_overrides)
+        svc = OCRService(ocr_cfg, p.cfg["text"], adapters={a.name: a for a in adapters})
+        svc.initialize()
+        old, p.ocr = p.ocr, svc
+        self.addCleanup(svc.shutdown)
+        self.addCleanup(setattr, p, "ocr", old)
+
+    def render(self, data):
+        """Render a /api/test-ocr response with the real dashboard.js formatter (Node)."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("NOT_AVAILABLE: node not installed (only needed to test dashboard.js)")
+        js = ("const D=require(process.argv[1]);let s='';process.stdin.setEncoding('utf8');"
+              "process.stdin.on('data',c=>s+=c).on('end',()=>process.stdout.write(D.formatOcrTest(JSON.parse(s))));")
+        out = subprocess.run([node, "-e", js, DASHBOARD_JS], input=json.dumps(data), capture_output=True,
+                             encoding="utf-8", timeout=60, check=True)
+        return out.stdout
+
+    def test_test_ocr_known_fixture_returns_text(self):
+        r = self.ocr_on(fixture("room_204"))["ocr_test_on_frame"]
+        self.assertEqual((r["text"], r["reason"]), ("Room 204", "selected"))
+        self.assertGreaterEqual(r["confidence"], 0.5)
+        self.assertEqual(r["frame"]["shape"][2], 3)
+        self.assertGreater(r["frame"]["max"], r["frame"]["min"])
+        self.assertIn("latency_s", r)
+
+    def test_test_ocr_unavailable_primary_uses_available_engine(self):
+        data = self.ocr_on(fixture("sentence"))
+        self.assertEqual(data["config"]["engine"], "tesseract")
+        self.assertEqual(data["ocr_engines"]["tesseract"]["status"], "NOT_AVAILABLE")
+        r = data["ocr_test_on_frame"]
+        self.assertEqual(r["reason"], "selected")
+        self.assertEqual(r["text"], MANIFEST["sentence"]["text"])
+        self.assertEqual(r["engine"], "easyocr")          # the engine that actually produced the text
+        self.assertEqual(r["engines_run"], ["easyocr"])   # tesseract skipped, never "run"
+
+    def test_test_ocr_distinguishes_outcomes(self):
+        with self.subTest("invalid frame"):
+            r = self.ocr_on(np.zeros((10, 10, 3), np.float64))["ocr_test_on_frame"]
+            self.assertIn("error", r)
+            self.assertNotIn("reason", r)
+        with self.subTest("OCR found no text"):
+            r = self.ocr_on(fixture("blank"))["ocr_test_on_frame"]
+            self.assertEqual((r["text"], r["reason"], r["low_confidence"]), ("", "no_text", {}))
+            self.assertEqual(r["engines_run"], ["easyocr"])
+        with self.subTest("text found but confidence too low"):
+            self.swap_ocr(FakeOCRAdapter("easyocr", "Room 204", 0.2))
+            r = self.ocr_on(fixture("room_204"))["ocr_test_on_frame"]
+            self.assertEqual((r["text"], r["reason"]), ("", "below_min_confidence"))
+            self.assertEqual(r["low_confidence"], {"easyocr": 0.2})
+        with self.subTest("no engine available"):
+            self.swap_ocr(FakeOCRAdapter("tesseract", load_status=EngineStatus.NOT_AVAILABLE),
+                          FakeOCRAdapter("easyocr", load_status=EngineStatus.MODEL_NOT_AVAILABLE))
+            r = self.ocr_on(fixture("room_204"))["ocr_test_on_frame"]
+            self.assertEqual((r["text"], r["reason"], r["engines_run"]), ("", "no_engine_available", []))
+
+    def test_dashboard_renders_actual_test_ocr_result(self):
+        html = self.render(self.ocr_on(fixture("room_204")))
+        self.assertIn('Detected "Room 204"', html)
+        self.assertIn("Engine used: easyocr", html)
+        self.assertIn("Primary engine tesseract was skipped (NOT_AVAILABLE)", html)
+        self.assertNotIn("No text", html)
+
+        self.assertIn("No usable camera frame", self.render(self.ocr_on(np.zeros((10, 10, 3), np.float64))))
+        self.assertIn("OCR ran but found no text", self.render(self.ocr_on(fixture("blank"))))
+
+        self.swap_ocr(FakeOCRAdapter("easyocr", "Room 204", 0.2))
+        html = self.render(self.ocr_on(fixture("room_204")))
+        self.assertIn("confidence was below Min Confidence", html)
+        self.assertIn("easyocr confidence 20.0% &lt; Min Confidence 50.0%", html)
+
+        self.swap_ocr(FakeOCRAdapter("easyocr", "<img src=x onerror=alert(1)> Room", 0.95))
+        html = self.render(self.ocr_on(fixture("room_204")))
+        self.assertNotIn("<img", html)  # OCR text is escaped
+
+    def test_test_ocr_no_text_scene_trocr_skipped(self):
+        """A room with no text: real EasyOCR finds nothing, so TrOCR (which would invent
+        '0 2 . 0 0') is never run, and Test OCR says so instead of showing invented text."""
+        easyocr = self.app_module.pipeline.ocr.adapters["easyocr"]
+        trocr = FakeOCRAdapter("trocr", "0 2 . 0 0", 0.68, needs_text_regions=True)
+        self.swap_ocr(easyocr, trocr, mode="fallback")
+        data = self.ocr_on(fixture("scene_room"))
+        r = data["ocr_test_on_frame"]
+        self.assertEqual((r["text"], r["reason"], r["engines_run"]), ("", "no_text", ["easyocr"]))
+        self.assertEqual(r["skipped"], {"trocr": "no_text_region"})
+        self.assertEqual(trocr.calls, 0)
+        html = self.render(data)
+        self.assertIn("trocr skipped: no text region was found", html)
+        self.assertNotIn("0 2 . 0 0", html)
+
+    def test_dashboard_form_shows_saved_ocr_config(self):
+        html = self.client.get("/").text
+        self.assertIn('<option value="tesseract" selected>Tesseract (NOT_AVAILABLE)</option>', html)
+        self.assertIn('<option value="single_engine" selected>', html)
+        self.assertIn('<option value="en" selected>', html)
+
+    def test_static_assets_are_versioned(self):
+        html = self.client.get("/").text
+        for name, version in self.app_module.ASSET_VERSIONS.items():
+            url = f"/static/{name}?v={version}"
+            self.assertIn(url, html)
+            self.assertEqual(self.client.get(url).status_code, 200)
+        with open(DASHBOARD_JS, "rb") as f:
+            self.assertEqual(self.app_module.ASSET_VERSIONS["dashboard.js"], hashlib.sha256(f.read()).hexdigest()[:12])
 
     def test_history(self):
         self.assertIn("history", self.client.get("/api/history").json())

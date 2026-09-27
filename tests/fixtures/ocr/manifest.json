@@ -110,6 +110,34 @@
       "synthetic": true
     },
     {
+      "id": "scene_clock_switch",
+      "path": "scenes/scene_clock_switch.png",
+      "category": "scenes",
+      "language": "en",
+      "text": "",
+      "style": "no_text",
+      "synthetic": true,
+      "objects": [
+        "clock",
+        "switch"
+      ]
+    },
+    {
+      "id": "scene_room",
+      "path": "scenes/scene_room.png",
+      "category": "scenes",
+      "language": "en",
+      "text": "",
+      "style": "no_text",
+      "synthetic": true,
+      "objects": [
+        "clock",
+        "switch",
+        "chair",
+        "grille"
+      ]
+    },
+    {
       "id": "hindi_room",
       "path": "multilingual/hindi_room.png",
       "category": "multilingual",

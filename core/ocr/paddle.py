@@ -2,7 +2,11 @@
 
 Models are passed as explicit local directories so PaddleX never downloads at runtime.
 The 2.x API used by v2.0.4 (``use_gpu``, ``show_log``, ``ocr()``) does not exist in 3.x.
+
+Call an instance from one long-lived thread only (OCRService does): driven from a new thread per
+call, a PaddlePaddle predictor leaks ~0.1 GB per thread and crashes natively (ADR 0006 addendum).
 """
+import logging
 import os
 from typing import List
 
@@ -35,6 +39,17 @@ class PaddleOCRAdapter(OCRAdapter):
                 f"model(s) not found under {self.cfg['model_root']}: {', '.join(missing)}")
         # Skip PaddleX's network check of the model hoster; everything is local.
         os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+        # Creating a PaddleOCR engine sets the ROOT logger to WARNING, which silenced every INFO
+        # log of the app once Paddle was lazily loaded. Restore the root logger afterwards.
+        root = logging.getLogger()
+        saved_level, saved_handlers = root.level, list(root.handlers)
+        try:
+            return self._create(det_name, rec_name)
+        finally:
+            root.setLevel(saved_level)
+            root.handlers[:] = saved_handlers
+
+    def _create(self, det_name: str, rec_name: str):
         try:
             from paddleocr import PaddleOCR
         except ImportError:
@@ -63,6 +78,7 @@ class PaddleOCRAdapter(OCRAdapter):
         texts: List[str] = []
         confs: List[float] = []
         boxes: List[BBox] = []
+        regions = []
         for res in results or []:
             rec_boxes = res.get("rec_boxes")
             for i, (text, score) in enumerate(zip(res.get("rec_texts", []), res.get("rec_scores", []))):
@@ -74,7 +90,8 @@ class PaddleOCRAdapter(OCRAdapter):
                 if rec_boxes is not None and i < len(rec_boxes):
                     x1, y1, x2, y2 = (int(v) for v in rec_boxes[i][:4])
                     boxes.append((x1, y1, x2 - x1, y2 - y1))
+                    regions.append({"box": boxes[-1], "text": text})
         confidence = float(np.mean(confs)) if confs else 0.0
         logger.debug("paddle: %d lines, conf=%.2f", len(texts), confidence)
         return OCRResult(text=" ".join(texts), confidence=confidence, bounding_boxes=boxes,
-                         metadata={"line_confidences": confs})
+                         metadata={"line_confidences": confs, "text_regions": regions})

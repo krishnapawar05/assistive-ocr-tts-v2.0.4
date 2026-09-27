@@ -64,6 +64,20 @@ class OCRServiceTest(unittest.TestCase):
         d = service({"easyocr": a, "paddle": b}).recognize(self.frame)
         self.assertIsNone(d.winner)
         self.assertEqual(d.text, "")
+        # Distinguishable from "found nothing": text was read, but not confidently enough.
+        self.assertEqual(d.reason, "below_min_confidence")
+        self.assertEqual(d.low_confidence, {"easyocr": 0.2, "paddle": 0.3})
+
+    def test_empty_result_is_no_text(self):
+        a = FakeOCRAdapter("easyocr", "", 0.0)
+        d = service({"easyocr": a}).recognize(self.frame)
+        self.assertEqual((d.reason, d.low_confidence), ("no_text", {}))
+
+    def test_rejected_by_score_is_below_threshold(self):
+        a = FakeOCRAdapter("easyocr", "Room 204", 0.9)
+        d = service({"easyocr": a}, min_final_score=0.999).recognize(self.frame)
+        self.assertEqual(d.reason, "below_threshold")
+        self.assertEqual(len(d.candidates), 1)
 
     def test_ensemble_runs_all_and_fuses(self):
         a = FakeOCRAdapter("easyocr", "Room 204", 0.9)
@@ -168,11 +182,109 @@ class OCRServiceTest(unittest.TestCase):
         d = service({"easyocr": a, "paddle": b}).recognize(self.frame)
         self.assertEqual(b.status, EngineStatus.MODEL_NOT_AVAILABLE)
         self.assertEqual(d.engines_run, ["easyocr"])
-        self.assertEqual(d.reason, "no_text")
+        self.assertEqual(d.reason, "below_min_confidence")  # easyocr read text, just not confidently
 
     def test_unsupported_language(self):
         a = FakeOCRAdapter("trocr", "Room 204", 0.9, language="hi")
         self.assertEqual(a.initialize(), EngineStatus.LANGUAGE_NOT_SUPPORTED)
+
+
+LINE = (0.25, 0.40, 0.50, 0.20)   # a text line, as fractions of the image
+CLOCK = (0.60, 0.02, 0.04, 0.08)
+SWITCH = (0.46, 0.30, 0.05, 0.07)
+
+
+def hallucinating_trocr(text="0 2 . 0 0", conf=0.68):
+    """TrOCR as observed on a camera frame of a room with no text: it reads *something* anywhere."""
+    return FakeOCRAdapter("trocr", text, conf, needs_text_regions=True)
+
+
+class TrOCRRegionGatingTest(unittest.TestCase):
+    """TrOCR is recognition-only: it runs only on plausible text regions found by another engine."""
+
+    def setUp(self):
+        self.frame = Preprocessor(default_config()["frame"]["preprocess"]).prepare(text_frame())
+
+    def test_room_without_text_trocr_not_run(self):
+        """The runtime case: EasyOCR finds nothing, PaddleOCR boxes a clock and a light switch with
+        junk readings, and TrOCR would have invented '0 2 . 0 0' and had it spoken."""
+        easy = FakeOCRAdapter("easyocr", "", 0.0)
+        paddle = FakeOCRAdapter("paddle", "� E", 0.41, text_regions=[(CLOCK, "�"), (SWITCH, "E")])
+        trocr = hallucinating_trocr()
+        d = service({"easyocr": easy, "paddle": paddle, "trocr": trocr}).recognize(self.frame)
+        self.assertEqual(trocr.calls, 0)
+        self.assertEqual(d.skipped, {"trocr": "no_text_region"})
+        self.assertNotIn("trocr", d.engines_run)
+        self.assertIsNone(d.winner)
+        self.assertEqual(d.text, "")
+
+    def test_no_text_scene_in_every_mode(self):
+        for mode, engine in (("fallback", "easyocr"), ("ensemble", "easyocr"), ("single_engine", "trocr"),
+                             ("fallback", "trocr")):
+            with self.subTest(mode=mode, primary=engine):
+                easy = FakeOCRAdapter("easyocr", "", 0.0)
+                trocr = hallucinating_trocr()
+                adapters = {"easyocr": easy, "trocr": trocr}
+                d = service(adapters, mode=mode, engine=engine,
+                            order=[n for n in adapters if n != engine]).recognize(self.frame)
+                self.assertEqual(trocr.calls, 0)
+                self.assertEqual(d.skipped, {"trocr": "no_text_region"})
+                self.assertEqual((d.text, d.reason), ("", "no_text"))
+
+    def test_trocr_reads_only_the_detected_text_regions(self):
+        easy = FakeOCRAdapter("easyocr", "Weet me at Moon", 0.45, text_regions=[(LINE, "Weet me at Moon")])
+        trocr = FakeOCRAdapter("trocr", "Meet me at noon", 0.9, needs_text_regions=True)
+        d = service({"easyocr": easy, "trocr": trocr}, text_type="handwritten").recognize(self.frame)
+        self.assertEqual(d.winner.result.engine, "trocr")
+        self.assertEqual(d.text, "Meet me at noon")
+        self.assertEqual(d.region_source, "easyocr")
+        h, w = self.frame.gray.shape[:2]
+        self.assertEqual(trocr.regions_seen, [[(int(0.25 * w), int(0.40 * h), int(0.50 * w), int(0.20 * h))]])
+
+    def test_junk_region_readings_are_not_text_regions(self):
+        easy = FakeOCRAdapter("easyocr", "3 E", 0.45, text_regions=[(CLOCK, "3"), (SWITCH, "E"), (LINE, "~~")])
+        trocr = hallucinating_trocr()
+        d = service({"easyocr": easy, "trocr": trocr}).recognize(self.frame)
+        self.assertEqual(trocr.calls, 0)
+        self.assertEqual(d.region_source, "")
+
+    def test_trocr_primary_runs_after_a_region_finder(self):
+        # A good EasyOCR reading is accepted before TrOCR is needed (fallback semantics).
+        easy = FakeOCRAdapter("easyocr", "Room 204", 0.95, text_regions=[(LINE, "Room 204")])
+        trocr = FakeOCRAdapter("trocr", "Room 204", 0.9, needs_text_regions=True)
+        d = service({"trocr": trocr, "easyocr": easy}).recognize(self.frame)
+        self.assertEqual(d.engines_run, ["easyocr"])
+        self.assertEqual(trocr.calls, 0)
+        # A poor EasyOCR reading of real text: TrOCR re-reads EasyOCR's regions.
+        easy = FakeOCRAdapter("easyocr", "Weet me at Moon", 0.45, text_regions=[(LINE, "Weet me at Moon")])
+        trocr = FakeOCRAdapter("trocr", "Meet me at noon", 0.9, needs_text_regions=True)
+        d = service({"trocr": trocr, "easyocr": easy}, text_type="handwritten").recognize(self.frame)
+        self.assertEqual(d.engines_run, ["easyocr", "trocr"])
+        self.assertEqual(d.text, "Meet me at noon")
+
+    def test_single_engine_trocr_uses_region_finder_for_regions_only(self):
+        easy = FakeOCRAdapter("easyocr", "Weet me at Moon", 0.95, text_regions=[(LINE, "Weet me at Moon")])
+        trocr = FakeOCRAdapter("trocr", "Meet me at noon", 0.9, needs_text_regions=True)
+        d = service({"trocr": trocr, "easyocr": easy}, mode="single_engine").recognize(self.frame)
+        self.assertEqual(d.engines_run, ["trocr"])
+        self.assertEqual([c.result.engine for c in d.candidates], ["trocr"])  # EasyOCR's text is not a candidate
+        self.assertEqual((d.text, d.region_source), ("Meet me at noon", "easyocr"))
+
+    def test_ensemble_runs_trocr_after_region_finders(self):
+        easy = FakeOCRAdapter("easyocr", "Room 204", 0.9, text_regions=[(LINE, "Room 204")])
+        paddle = FakeOCRAdapter("paddle", "Room 204", 0.9, text_regions=[(LINE, "Room 204")])
+        trocr = FakeOCRAdapter("trocr", "Room 204", 0.9, needs_text_regions=True)
+        d = service({"trocr": trocr, "easyocr": easy, "paddle": paddle}, mode="ensemble").recognize(self.frame)
+        self.assertEqual(d.engines_run, ["easyocr", "paddle", "trocr"])
+        self.assertEqual(len(trocr.regions_seen), 1)
+
+    def test_trocr_without_any_region_finder_is_not_run(self):
+        trocr = hallucinating_trocr()
+        easy = FakeOCRAdapter("easyocr", load_status=EngineStatus.MODEL_NOT_AVAILABLE)
+        d = service({"trocr": trocr, "easyocr": easy}).recognize(self.frame)
+        self.assertEqual(trocr.calls, 0)
+        self.assertEqual(d.skipped, {"trocr": "no_region_source"})
+        self.assertEqual(d.reason, "no_engine_available")
 
 
 if __name__ == "__main__":

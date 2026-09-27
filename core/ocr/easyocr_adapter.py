@@ -62,4 +62,5 @@ class EasyOCRAdapter(OCRAdapter):
         confidence = float(np.mean(confs)) if confs else 0.0
         logger.debug("easyocr: %d regions, conf=%.2f", len(texts), confidence)
         return OCRResult(text=" ".join(texts), confidence=confidence, bounding_boxes=boxes,
-                         metadata={"line_confidences": confs})
+                         metadata={"line_confidences": confs,
+                                   "text_regions": [{"box": b, "text": t} for b, t in zip(boxes, texts)]})

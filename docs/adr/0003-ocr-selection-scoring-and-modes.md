@@ -25,8 +25,10 @@ per frame because every engine ran.
    (RapidFuzz), character validity, script/language consistency, length plausibility,
    optional bbox agreement and speed, minus garbage and repetition penalties. Length never
    rewards longer text. Nothing below `min_final_score` is spoken.
-3. **TrOCR** only sees OpenCV-detected line crops. Its confidence is the mean token
-   probability, and lines below `line_min_confidence` are dropped.
+3. **TrOCR** only sees line crops. Its confidence is the mean token probability, and lines
+   below `line_min_confidence` are dropped. *Superseded in part by ADR 0007:* inside
+   OCRService the crops come from text regions found by EasyOCR/PaddleOCR, not from the OpenCV
+   localizer.
 4. Each engine runs on its own worker with `timeout_s`. A hung engine is skipped as `BUSY`
    instead of stalling the frame loop.
 

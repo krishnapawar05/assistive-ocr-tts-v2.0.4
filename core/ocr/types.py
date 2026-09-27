@@ -35,6 +35,8 @@ class OCRResult:
     processing_time: float = 0.0
     bounding_boxes: List[BBox] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    frame_seq_id: int = 0
+    capture_timestamp: float = 0.0
 
     @property
     def is_empty(self) -> bool:
@@ -58,8 +60,16 @@ class OCRDecision:
     candidates: List[ScoredCandidate] = field(default_factory=list)
     errors: Dict[str, str] = field(default_factory=dict)    # engine -> error code
     engines_run: List[str] = field(default_factory=list)
+    # engine -> confidence of a non-empty result dropped for being below ocr.min_confidence
+    low_confidence: Dict[str, float] = field(default_factory=dict)
+    # region-only engine (TrOCR) -> why it did not run: "no_text_region" (engines that ran found no
+    # plausible text) or "no_region_source" (no engine that finds text regions could run)
+    skipped: Dict[str, str] = field(default_factory=dict)
+    region_source: str = ""  # engine whose text regions the region-only engines were given
     reason: str = ""
     processing_time: float = 0.0
+    frame_seq_id: int = 0
+    capture_timestamp: float = 0.0
 
     @property
     def text(self) -> str:

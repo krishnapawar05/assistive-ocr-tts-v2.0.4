@@ -16,7 +16,8 @@
                 ├─ TesseractOCRAdapter   ┐ each on its own worker thread with a timeout;
                 ├─ EasyOCRAdapter        │ only one engine runs at a time (ADR 0006)
                 ├─ PaddleOCRAdapter      │
-                └─ TrOCRAdapter ◄─ regions.find_text_lines (line crops)
+                └─ TrOCRAdapter ◄─ text regions read by EasyOCR/PaddleOCR in the same
+                                   frame (plausible text only); never whole frames (ADR 0007)
               OCRScorer + TextProcessor ─► OCRDecision (winner + explained scores)
                                     ▼
  core/text    DuplicateFilter (exact / normalized / fuzzy, cooldown)

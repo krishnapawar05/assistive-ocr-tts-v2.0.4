@@ -12,10 +12,19 @@ from tests.ocr import engine_case  # noqa: F401  (sets offline env)
 from tests.ocr.engine_case import FIXTURES, MANIFEST, cer, load_adapter
 
 PRE = Preprocessor(default_config()["frame"]["preprocess"])
+# Camera-like scenes with no text (wall clock, light switch, chair, window grille); see ADR 0007.
+NO_TEXT_SCENES = ("scene_room", "scene_clock_switch")
 
 
 def frame(fid):
     return PRE.prepare(cv2.imread(os.path.join(FIXTURES, MANIFEST[fid]["path"])))
+
+
+# Every service a test creates; shut down after each test so its engine worker threads end.
+# This module holds EasyOCR + PaddleOCR + TrOCR at once (ensemble) and peaks at ~2.4-3 GB; the
+# TrOCR region tests live in test_trocr_regions.py so each process stays smaller (a run that
+# peaked at 2.8 GB crashed natively inside PaddlePaddle when the laptop ran out of RAM).
+_OPEN_SERVICES = []
 
 
 def real_service(mode, engine, fallback_order, text_type="printed", **ocr_over):
@@ -26,10 +35,25 @@ def real_service(mode, engine, fallback_order, text_type="printed", **ocr_over):
     adapters = {name: load_adapter(name) for name in ("tesseract", "easyocr", "paddle", "trocr")}
     svc = OCRService(ocr, cfg["text"], adapters=adapters)
     svc.initialize()
+    _OPEN_SERVICES.append(svc)
     return svc
 
 
+def recognize_once(fid, mode, engine, fallback_order, **kw):
+    """One frame through a fresh service, which is shut down right away (see _OPEN_SERVICES)."""
+    svc = real_service(mode, engine, fallback_order, **kw)
+    try:
+        return svc.recognize(frame(fid))
+    finally:
+        _OPEN_SERVICES.remove(svc)
+        svc.shutdown()
+
+
 class OCRPipelineTest(unittest.TestCase):
+    def tearDown(self):
+        while _OPEN_SERVICES:
+            _OPEN_SERVICES.pop().shutdown()
+
     @classmethod
     def setUpClass(cls):
         if not load_adapter("easyocr").is_available or not load_adapter("paddle").is_available:
@@ -75,6 +99,7 @@ class OCRPipelineTest(unittest.TestCase):
         garbage = FakeOCRAdapter("tesseract", "R§§m ¤¤4 ~~", 0.55)
         svc = OCRService(ocr, cfg["text"], adapters={"tesseract": garbage, "easyocr": load_adapter("easyocr")})
         svc.initialize()
+        _OPEN_SERVICES.append(svc)
         d = svc.recognize(frame("room_204"))
         self.assertEqual(d.engines_run, ["tesseract", "easyocr"])
         self.assertEqual(d.winner.result.engine, "easyocr")
@@ -85,12 +110,15 @@ class OCRPipelineTest(unittest.TestCase):
             self.skipTest("NOT_AVAILABLE: TrOCR")
         d = real_service("fallback", "trocr", ["easyocr"], text_type="handwritten").recognize(frame("hand_meet"))
         self.assertLessEqual(cer(MANIFEST["hand_meet"]["text"], d.text), 0.25, d.text)
+        self.assertEqual(d.winner.result.engine, "trocr")
+        self.assertEqual(d.engines_run, ["easyocr", "trocr"])  # TrOCR waited for EasyOCR's text regions
 
     def test_hindi_without_models_is_controlled(self):
         cfg = default_config()
         cfg["ocr"].update(language="hi", mode="fallback", engine="easyocr", fallback_order=["paddle", "trocr"])
         with self.assertLogs("ocr.service", level="ERROR"):
             svc = OCRService(cfg["ocr"], cfg["text"])
+            _OPEN_SERVICES.append(svc)
             statuses = svc.initialize()
         self.assertTrue(all(s != "READY" for s in statuses.values()), statuses)
         self.assertEqual(svc.recognize(frame("hindi_room")).reason, "no_engine_available")

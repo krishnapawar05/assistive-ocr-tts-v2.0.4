@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 
 from core.frame.processing import Preprocessor
-from core.ocr.regions import find_text_lines
+from core.ocr.regions import find_text_lines, lines_from_regions
 from tests.helpers import default_config
 
 FIX = os.path.join(os.path.dirname(os.path.dirname(__file__)), "fixtures", "ocr")
@@ -43,6 +43,13 @@ class RegionsTest(unittest.TestCase):
         gray = self.pre.prepare(cv2.imread(os.path.join(FIX, self.manifest["sentence"]["path"]))).gray
         for x, y, w, h in find_text_lines(gray, self.cfg["ocr"]["regions"]):
             self.assertTrue(0 <= x and 0 <= y and x + w <= gray.shape[1] and y + h <= gray.shape[0])
+
+    def test_lines_from_detector_regions(self):
+        """Detector word boxes -> padded line crops in reading order, clipped to the image."""
+        cfg = dict(self.cfg["ocr"]["regions"], padding_px=6)
+        words = [(280, 100, 80, 40), (100, 100, 150, 40), (100, 200, 120, 40), (0, 0, 0, 10)]
+        lines = lines_from_regions(words, (240, 400), cfg)
+        self.assertEqual(lines, [(94, 94, 272, 52), (94, 194, 132, 46)])  # 2nd line clipped at the bottom
 
 
 if __name__ == "__main__":

@@ -1,10 +1,13 @@
 # app.py
 import gc
+import hashlib
 import logging
 import os
 import sys
 import threading
+import time
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -16,6 +19,7 @@ from core.camera.base import CameraError
 from core.camera.opencv_camera import create_camera
 from core.config import Config, ConfigError
 from core.offline import apply_offline_env
+from core.status import EngineStatus
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -49,7 +53,18 @@ async def lifespan(_app):
 
 app = FastAPI(title="Assistive OCR→TTS", lifespan=lifespan)
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def _asset_version(name: str) -> str:
+    """Content hash appended to static URLs. StaticFiles sends no Cache-Control, so browsers
+    cache heuristically and could keep running an old dashboard.js against a new server."""
+    with open(os.path.join(STATIC_DIR, name), "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()[:12]
+
+
+ASSET_VERSIONS = {name: _asset_version(name) for name in ("dashboard.js", "style.css")}
 
 pipeline = AssistivePipeline(cfg)
 _reload_lock = threading.Lock()
@@ -65,7 +80,12 @@ def current() -> AssistivePipeline:
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    return templates.TemplateResponse(request, "dashboard.html", {"config": cfg.data, "voices": current().voices()})
+    p = current()
+    # Engines that cannot run (unavailable or failed); READY and not-yet-loaded ones are usable.
+    unusable = {name: d["status"] for name, d in p.diagnostics()["ocr_engines"].items()
+                if d["status"] not in (EngineStatus.READY.value, EngineStatus.UNINITIALIZED.value)}
+    return templates.TemplateResponse(request, "dashboard.html", {
+        "config": cfg.data, "voices": p.voices(), "assets": ASSET_VERSIONS, "unusable_ocr": unusable})
 
 
 @app.post("/api/start")
@@ -150,19 +170,34 @@ async def api_replay():
                         status_code=404)
 
 
-def _grab_frame():
-    """Read one frame for diagnostics. The pipeline owns the camera while it is running."""
-    if current().running:
-        raise CameraError("camera is in use by the running pipeline; stop it first")
-    camera = create_camera(cfg.data["camera"])
-    camera.open()
-    try:
-        frame = camera.read()
-    finally:
-        camera.close()
-    if frame is None:
-        raise CameraError("camera opened but returned no frame")
-    return frame
+_camera_lock = threading.Lock()
+
+
+def _grab_frame(p: Optional[AssistivePipeline] = None):
+    """Read one frame for diagnostics or preview.
+    If the pipeline is running, borrow the most recent captured frame without disrupting the stream."""
+    pipeline_inst = p if p is not None else current()
+    if pipeline_inst.running and pipeline_inst.controller is not None:
+        # Wait up to 2.5 seconds for the streaming controller to yield its first frame if connecting
+        for _ in range(5):
+            captured = pipeline_inst.controller.get_current_frame()
+            if captured is not None and getattr(captured, "image", None) is not None:
+                return captured.image.copy()
+            time.sleep(0.5)
+        state = pipeline_inst.controller.state
+        err = pipeline_inst.controller.last_error
+        raise CameraError(f"camera is in use by pipeline ({state}{f': {err}' if err else ''})")
+
+    with _camera_lock:
+        camera = create_camera(cfg.data["camera"])
+        camera.open()
+        try:
+            frame = camera.read()
+        finally:
+            camera.close()
+        if frame is None:
+            raise CameraError("camera opened but returned no frame")
+        return frame
 
 
 @app.get("/api/test-camera")
@@ -176,28 +211,82 @@ def api_test_camera():
                          "frame_shape": list(frame.shape)})
 
 
+@app.get("/api/camera/snapshot")
+def api_camera_snapshot():
+    """Return a JPEG snapshot of the camera's current frame for the UI viewfinder."""
+    import cv2
+    try:
+        frame = _grab_frame()
+        # Resize thumbnail for efficient browser rendering if large
+        h, w = frame.shape[:2]
+        if max(h, w) > 960:
+            scale = 960.0 / max(h, w)
+            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if not ok:
+            raise CameraError("failed to encode JPEG")
+        return Response(content=buf.tobytes(), media_type="image/jpeg",
+                        headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=503)
+
+
+def _test_ocr_on_frame(p: AssistivePipeline) -> dict:
+    """Grab one frame and run the configured OCR on it. Distinguishes: no usable frame
+    ("error"), and via "reason": selected, no_text, below_min_confidence, below_threshold,
+    no_engine_available, all_engines_failed."""
+    t0 = time.perf_counter()
+    try:
+        frame = _grab_frame()
+        report = p.quality.assess(frame)  # raises FrameError for an invalid frame
+        prepared = p.preprocessor.prepare(frame)
+    except (CameraError, FrameError) as e:
+        logger.info("test-ocr: no usable frame: %s", e)
+        return {"error": str(e)}
+    frame_info = {"shape": list(frame.shape), "dtype": str(frame.dtype), "min": int(frame.min()),
+                  "max": int(frame.max()), "mean": round(float(frame.mean()), 1),
+                  "prepared_shape": list(prepared.gray.shape)}
+    logger.info("test-ocr: frame shape=%s dtype=%s min=%d max=%d mean=%.1f prepared=%s quality=%s",
+                frame_info["shape"], frame_info["dtype"], frame_info["min"], frame_info["max"],
+                frame_info["mean"], frame_info["prepared_shape"], "ok" if report.usable else report.reasons)
+    decision = p.ocr.recognize(prepared)
+    winner = decision.winner
+    latency = time.perf_counter() - t0
+    logger.info("test-ocr: primary=%s mode=%s engines_run=%s errors=%s low_confidence=%s skipped=%s reason=%s "
+                "engine=%s confidence=%.2f score=%.2f latency=%.2fs", p.ocr.cfg["engine"], p.ocr.mode,
+                decision.engines_run, decision.errors, decision.low_confidence, decision.skipped, decision.reason,
+                winner.result.engine if winner else "-", winner.result.confidence if winner else 0.0,
+                winner.final_score if winner else 0.0, latency)
+    for c in decision.candidates:  # recognized text: DEBUG only (privacy)
+        logger.debug("test-ocr: candidate %s raw=%r conf=%.2f score=%.2f", c.result.engine, c.result.text,
+                     c.result.confidence, c.final_score)
+    logger.debug("test-ocr: accepted text=%r", decision.text)
+    return {
+        "text": decision.text[:100],
+        "engine": winner.result.engine if winner else "",
+        "confidence": round(winner.result.confidence, 3) if winner else 0.0,
+        "score": round(winner.final_score, 3) if winner else 0.0,
+        "reason": decision.reason,
+        "engines_run": decision.engines_run,
+        "errors": decision.errors,
+        "low_confidence": {k: round(v, 3) for k, v in decision.low_confidence.items()},
+        "skipped": decision.skipped,
+        "region_source": decision.region_source,
+        "candidates": [{"engine": c.result.engine, "text": c.cleaned_text[:100],
+                        "confidence": round(c.result.confidence, 3), "score": round(c.final_score, 3)}
+                       for c in decision.candidates if c is not winner],
+        "frame_quality": {"usable": report.usable, "reasons": report.reasons},
+        "frame": frame_info,
+        "latency_s": round(latency, 2),
+    }
+
+
 @app.get("/api/test-ocr")
 def api_test_ocr():
     """Report every OCR/TTS engine's status and run OCR once on a camera frame if possible."""
     p = current()
-    diag = p.diagnostics()
-    frame_result = None
-    try:
-        frame = _grab_frame()
-        report = p.quality.assess(frame)
-        decision = p.ocr.recognize(p.preprocessor.prepare(frame))
-        frame_result = {
-            "text": decision.text[:100],
-            "engine": decision.winner.result.engine if decision.winner else "",
-            "confidence": round(decision.winner.result.confidence, 3) if decision.winner else 0.0,
-            "score": round(decision.winner.final_score, 3) if decision.winner else 0.0,
-            "reason": decision.reason,
-            "engines_run": decision.engines_run,
-            "errors": decision.errors,
-            "frame_quality": {"usable": report.usable, "reasons": report.reasons},
-        }
-    except (CameraError, FrameError) as e:
-        frame_result = {"error": str(e)}
+    frame_result = _test_ocr_on_frame(p)
+    diag = p.diagnostics()  # after OCR, so lazily loaded fallback engines show their real state
     ocr_cfg = cfg.data["ocr"]
     return JSONResponse({
         "status": "ok",
@@ -206,9 +295,12 @@ def api_test_ocr():
         "tts_engines": diag["tts_engines"],
         "ocr_test_on_frame": frame_result,
         "config": {"mode": ocr_cfg["mode"], "engine": ocr_cfg["engine"],
-                   "min_confidence": ocr_cfg["min_confidence"], "min_text_len": ocr_cfg["min_text_len"]},
+                   "min_confidence": ocr_cfg["min_confidence"], "min_text_len": ocr_cfg["min_text_len"],
+                   "min_final_score": ocr_cfg["min_final_score"]},
     })
 
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
+    # Pass the app object, not "app:app": the import string makes uvicorn import this file a
+    # second time as module "app", which built a second pipeline (EasyOCR + Coqui loaded twice).
+    uvicorn.run(app, host="0.0.0.0", port=8000)

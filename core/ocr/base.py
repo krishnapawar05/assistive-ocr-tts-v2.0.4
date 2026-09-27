@@ -3,12 +3,12 @@
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 from ..languages import engine_language
-from .types import EngineStatus, OCRError, OCRErrorCode, OCRResult
+from .types import BBox, EngineStatus, OCRError, OCRErrorCode, OCRResult
 
 logger = logging.getLogger("ocr")
 
@@ -18,6 +18,9 @@ class OCRAdapter(ABC):
     name: str = ""
     #: "color" (BGR) or "gray" — which preprocessed image the engine expects.
     input_kind: str = "color"
+    #: Recognition-only engine (TrOCR): OCRService runs it only on text regions that another
+    #: engine found in the same frame, never on a whole frame (see ADR 0007).
+    needs_text_regions: bool = False
 
     def __init__(self, engine_cfg: Dict[str, Any], language: str):
         self.cfg = engine_cfg
@@ -58,15 +61,16 @@ class OCRAdapter(ABC):
         return self.status == EngineStatus.READY
 
     # ----- inference -------------------------------------------------------------------
-    def recognize(self, image: np.ndarray) -> OCRResult:
-        """Run OCR on one preprocessed image. Raises OCRError on failure."""
+    def recognize(self, image: np.ndarray, regions: Optional[List[BBox]] = None) -> OCRResult:
+        """Run OCR on one preprocessed image, or only on ``regions`` (x, y, w, h in that image's
+        coordinates) for engines that support it. Raises OCRError on failure."""
         if not self.is_available:
             raise OCRError(OCRErrorCode.ENGINE_NOT_AVAILABLE, self.name, self.status.value)
         if not isinstance(image, np.ndarray) or image.size == 0 or image.ndim not in (2, 3):
             raise OCRError(OCRErrorCode.INVALID_INPUT, self.name, "empty or malformed image")
         t0 = time.perf_counter()
         try:
-            result = self._recognize(image)
+            result = self._recognize(image) if regions is None else self._recognize_regions(image, regions)
         except OCRError:
             raise
         except Exception as e:
@@ -87,6 +91,10 @@ class OCRAdapter(ABC):
     @abstractmethod
     def _recognize(self, image: np.ndarray) -> OCRResult:
         """Engine inference. May raise; the base class maps exceptions to OCRError."""
+
+    def _recognize_regions(self, image: np.ndarray, regions: List[BBox]) -> OCRResult:
+        """Recognize only the given regions. Implemented by engines with needs_text_regions."""
+        raise NotImplementedError(f"{self.name} does not support region recognition")
 
     def describe(self) -> Dict[str, Any]:
         return {"engine": self.name, "status": self.status.value, "detail": self.status_detail,

@@ -2,6 +2,7 @@
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -11,19 +12,48 @@ from .base import CameraError, CameraInterface
 logger = logging.getLogger("camera")
 
 
+@dataclass
+class CapturedFrame:
+    """Frame container carrying monotonically increasing sequence ID and capture timestamp."""
+
+    image: np.ndarray
+    frame_seq_id: int
+    capture_timestamp: float
+    is_moving: bool = False
+    motion_score: float = 0.0
+
+    @property
+    def shape(self):
+        return self.image.shape
+
+    @property
+    def dtype(self):
+        return self.image.dtype
+
+    @property
+    def ndim(self):
+        return self.image.ndim
+
+    @property
+    def size(self):
+        return self.image.size
+
+
 class FrameController:
     """Keeps only the newest frame (older ones are useless for reading) and reconnects with
     exponential backoff when the camera cannot be opened or stops delivering frames."""
 
-    def __init__(self, camera: CameraInterface, cam_cfg: Dict[str, Any], capture_interval: float):
+    def __init__(self, camera: CameraInterface, cam_cfg: Dict[str, Any], capture_interval: float,
+                 motion_detector: Optional[Any] = None):
         self.camera = camera
         self.cfg = cam_cfg
         self.interval = float(capture_interval)
+        self.motion_detector = motion_detector
         self.state = "stopped"          # stopped | connecting | streaming | reconnecting
         self.last_error: Optional[str] = None
         self.frames_delivered = 0
         self.reconnects = 0
-        self._latest: Optional[np.ndarray] = None
+        self._latest: Optional[CapturedFrame] = None
         self._cond = threading.Condition()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -47,13 +77,20 @@ class FrameController:
         self.state = "stopped"
         return not alive
 
-    def get_frame(self, timeout: float) -> Optional[np.ndarray]:
+    def get_frame(self, timeout: float) -> Optional[CapturedFrame]:
         """Take the newest frame (each frame is handed out once)."""
         with self._cond:
             if self._latest is None:
                 self._cond.wait(timeout)
             frame, self._latest = self._latest, None
+            if frame is not None:
+                self._current_frame = frame
             return frame
+
+    def get_current_frame(self) -> Optional[CapturedFrame]:
+        """Peek at the most recent frame without consuming it (useful for preview/diagnostics)."""
+        with self._cond:
+            return self._latest or getattr(self, "_current_frame", None)
 
     def status(self) -> Dict[str, Any]:
         return {"state": self.state, "last_error": self.last_error, "frames": self.frames_delivered,
@@ -109,11 +146,23 @@ class FrameController:
             failures = 0
             self._set_state("streaming")
             now = time.monotonic()
+            
+            is_moving = False
+            motion_score = 0.0
+            if self.motion_detector is not None:
+                is_moving, motion_score = self.motion_detector.update(frame, now)
+
             if now - last_push < self.interval:
                 continue  # keep draining the driver buffer so the next frame is fresh
             last_push = now
             with self._cond:
-                self._latest = frame
                 self.frames_delivered += 1
+                self._latest = CapturedFrame(
+                    image=frame,
+                    frame_seq_id=self.frames_delivered,
+                    capture_timestamp=now,
+                    is_moving=is_moving,
+                    motion_score=motion_score,
+                )
                 self._cond.notify_all()
         self.camera.close()

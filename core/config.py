@@ -54,6 +54,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "min_mean_abs_diff": 2.0,      # frames closer than this to the last processed one are skipped
             "max_skip_s": 10.0,            # but re-process at least this often
         },
+        "motion_detection": {
+            "enabled": True,
+            "thumbnail_size": 32,
+            "motion_threshold": 25.0,      # MAD above this indicates strong camera movement
+            "stabilization_frames": 2,     # calm frames required before resuming OCR
+        },
     },
     "ocr": {
         "engine": "easyocr",               # primary engine
@@ -66,6 +72,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "min_text_len": 3,
         "accept_score": 0.75,              # fallback mode stops once a candidate scores this high
         "min_final_score": 0.5,            # nothing below this is ever spoken
+        "latency_budget_s": 0.0,           # max OCR duration before aborting fallback (0 = disabled)
         "serialize_engines": True,         # never run two OCR engines at once (memory safety)
         "preload": "primary",              # primary: load fallback engines on first use | all
         "engines": {
@@ -188,11 +195,17 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "policy": "queue",                 # queue | interrupt | drop_if_busy
         "max_queue_size": 5,
         "max_age_s": 30.0,                 # queued speech older than this is dropped
+        "max_frame_age_s": 30.0,           # queued speech whose camera frame is older than this is dropped
         "shutdown_timeout_s": 3.0,
     },
     "pipeline": {
         "frame_wait_timeout_s": 0.3,
         "join_timeout_s": 3.0,
+        "stale_frame": {
+            "enabled": True,
+            "max_frame_age_s": 30.0,       # discard OCR speech if frame is older than this
+            "max_seq_distance": 0,         # discard OCR speech if camera delivered > N newer frames (0 = disabled)
+        },
     },
     "app": {
         "high_contrast": False,
@@ -315,6 +328,10 @@ def validate(data: Dict[str, Any]) -> List[str]:
     num("frame.change_detection.thumbnail_size", 4, 256, integer=True)
     num("frame.change_detection.min_mean_abs_diff", 0, 255)
     num("frame.change_detection.max_skip_s", 0)
+    boolean("frame.motion_detection.enabled")
+    num("frame.motion_detection.thumbnail_size", 4, 256, integer=True)
+    num("frame.motion_detection.motion_threshold", 0, 255)
+    num("frame.motion_detection.stabilization_frames", 1, 60, integer=True)
 
     # ocr
     choice("ocr.engine", OCR_ENGINES)
@@ -331,6 +348,7 @@ def validate(data: Dict[str, Any]) -> List[str]:
     num("ocr.min_text_len", 1, integer=True)
     num("ocr.accept_score", 0, 1)
     num("ocr.min_final_score", 0, 1)
+    num("ocr.latency_budget_s", 0)
     boolean("ocr.serialize_engines")
     choice("ocr.preload", ("primary", "all"))
     for eng in OCR_ENGINES:
@@ -400,9 +418,13 @@ def validate(data: Dict[str, Any]) -> List[str]:
     choice("audio.policy", ("queue", "interrupt", "drop_if_busy"))
     num("audio.max_queue_size", 1, integer=True)
     num("audio.max_age_s", 0)
+    num("audio.max_frame_age_s", 0)
     num("audio.shutdown_timeout_s", 0)
     num("pipeline.frame_wait_timeout_s", 0.01)
     num("pipeline.join_timeout_s", 0.1)
+    boolean("pipeline.stale_frame.enabled")
+    num("pipeline.stale_frame.max_frame_age_s", 0)
+    num("pipeline.stale_frame.max_seq_distance", 0, integer=True)
     num("app.max_history", 1, integer=True)
     choice("app.log_level", ("DEBUG", "INFO", "WARNING", "ERROR"))
     boolean("app.offline_mode")

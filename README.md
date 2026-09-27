@@ -77,9 +77,10 @@ names in `det_model` and `rec_models`. CPU by default; set `ocr.engines.paddle.d
 
 ### TrOCR
 `microsoft/trocr-base-handwritten` from the Hugging Face cache, loaded with
-`local_files_only=True`. It is English handwriting only and works on text-line crops found by
-`core/ocr/regions.py`, never on whole frames. It is most useful with
-`ocr.text_type: "handwritten"`.
+`local_files_only=True`. It is English handwriting only. It is a recognizer, not a detector:
+it only reads text lines that EasyOCR or PaddleOCR found in the same frame, and it is skipped
+when they found no text (on a scene with no text it would otherwise invent some; ADR 0007). So it
+needs EasyOCR or PaddleOCR installed. It is most useful with `ocr.text_type: "handwritten"`.
 
 ### Coqui TTS
 `pip install coqui-tts torchaudio torchcodec` (in requirements; this is the maintained fork,

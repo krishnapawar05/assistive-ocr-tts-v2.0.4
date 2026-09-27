@@ -21,11 +21,17 @@ def default_config(**overrides) -> dict:
 
 
 class FakeOCRAdapter(OCRAdapter):
-    """Returns a scripted result; can simulate being unavailable, failing, or slow."""
+    """Returns a scripted result; can simulate being unavailable, failing, or slow.
+
+    text_regions: per-region readings a detector engine reports ([(box, text)], box as fractions
+    of the input image). needs_text_regions: behave like TrOCR (region-only); the regions it was
+    given are recorded in ``regions_seen``, and it "hallucinates" its scripted text on any of them.
+    """
 
     def __init__(self, name: str, text: str = "", confidence: float = 0.9,
                  load_status: EngineStatus = EngineStatus.READY, raise_exc: Optional[Exception] = None,
-                 delay_s: float = 0.0, timeout_s: float = 5.0, language: str = "en"):
+                 delay_s: float = 0.0, timeout_s: float = 5.0, language: str = "en",
+                 text_regions=None, needs_text_regions: bool = False):
         self.name = name
         super().__init__({"enabled": True, "timeout_s": timeout_s}, language)
         self.text = text
@@ -33,7 +39,10 @@ class FakeOCRAdapter(OCRAdapter):
         self.load_status = load_status
         self.raise_exc = raise_exc
         self.delay_s = delay_s
+        self.text_regions = text_regions or []
+        self.needs_text_regions = needs_text_regions
         self.calls = 0
+        self.regions_seen = []
 
     def _load(self):
         return self.load_status, "fake"
@@ -46,7 +55,14 @@ class FakeOCRAdapter(OCRAdapter):
         if self.raise_exc:
             raise self.raise_exc
         h, w = image.shape[:2]
-        return OCRResult(text=self.text, confidence=self.confidence, bounding_boxes=[(0, 0, w // 2, h // 2)])
+        regions = [{"box": (int(fx * w), int(fy * h), int(fw * w), int(fh * h)), "text": t}
+                   for (fx, fy, fw, fh), t in self.text_regions]
+        return OCRResult(text=self.text, confidence=self.confidence, bounding_boxes=[(0, 0, w // 2, h // 2)],
+                         metadata={"text_regions": regions})
+
+    def _recognize_regions(self, image: np.ndarray, regions) -> OCRResult:
+        self.regions_seen.append(list(regions))
+        return self._recognize(image)
 
 
 def make_config(tmpdir: str, data: Optional[dict] = None):

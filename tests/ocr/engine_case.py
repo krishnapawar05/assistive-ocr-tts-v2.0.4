@@ -11,6 +11,7 @@ import json
 import os
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
@@ -41,6 +42,22 @@ def cer(ref: str, hyp: str) -> float:
 
 
 _ADAPTER_CACHE = {}
+_PINNED_CLASSES = {}
+
+
+def _pinned(cls):
+    """Subclass whose recognize() always runs on the adapter's own single worker thread.
+
+    Cached adapters are shared by many OCRService instances in the tests, each with its own
+    worker threads. A PaddlePaddle predictor called from successive short-lived threads grew by
+    ~0.1 GB per thread and crashed natively (access violation) after ~9 threads. In the app each
+    engine instance is only ever driven by its service's one long-lived worker thread (ADR 0006).
+    """
+    if cls not in _PINNED_CLASSES:
+        def recognize(self, image, regions=None):
+            return self._test_worker.submit(cls.recognize, self, image, regions).result()
+        _PINNED_CLASSES[cls] = type(cls.__name__, (cls,), {"recognize": recognize})
+    return _PINNED_CLASSES[cls]
 
 
 def load_adapter(engine: str, language: str = "en"):
@@ -49,8 +66,10 @@ def load_adapter(engine: str, language: str = "en"):
     if key not in _ADAPTER_CACHE:
         cfg = default_config()
         adapter = build_adapters(cfg["ocr"], language)[engine]
+        adapter.__class__ = _pinned(type(adapter))
+        adapter._test_worker = ThreadPoolExecutor(1, thread_name_prefix=f"test-{engine}")
         with no_network() as guard:
-            adapter.initialize()
+            adapter._test_worker.submit(adapter.initialize).result()  # load on the same thread too
         adapter.network_attempts = list(guard.attempts)
         _ADAPTER_CACHE[key] = adapter
     return _ADAPTER_CACHE[key]

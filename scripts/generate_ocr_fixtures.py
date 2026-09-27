@@ -44,6 +44,15 @@ INDIC = [
     ("kannada_welcome", "multilingual", "ಸ್ವಾಗತ", "kn"),
 ]
 
+# Scenes with NO text but text-like shapes (wall clock, light switch, chair slats, window grille).
+# A camera frame like this made full-frame TrOCR invent "0 2 . 0 0", which was then spoken (ADR 0007).
+# id -> objects (name, *geometry in px) drawn on a plain wall
+SCENES = {
+    "scene_clock_switch": (("clock", 780, 45, 18), ("switch", 590, 220)),
+    "scene_room": (("clock", 300, 120, 18), ("switch", 590, 220), ("chair", 350, 460, 330, 260),
+                   ("grille", 1010, 120, 60, 320)),
+}
+
 STYLES = {
     "clean": ((255, 255, 255), (0, 0, 0)),
     "blur": ((255, 255, 255), (0, 0, 0)),
@@ -69,6 +78,50 @@ def render_latin(text, font_file, size, style):
     if style == "blur":
         frame = cv2.GaussianBlur(frame, (9, 9), 3)
     return frame
+
+
+def render_scene(sid, objects):
+    rng = np.random.default_rng(sum(map(ord, sid)))  # deterministic per scene
+    img = np.zeros((H, W, 3), np.uint8)
+    img[:] = (150, 205, 225)  # pale yellow wall (BGR)
+    img = np.clip(img.astype(np.float32) + np.linspace(-15, 15, W)[None, :, None]
+                  + rng.normal(0, 3, img.shape), 0, 255).astype(np.uint8)
+
+    def clock(cx, cy, r):
+        cv2.circle(img, (cx, cy), r, (245, 245, 245), -1)
+        cv2.circle(img, (cx, cy), r, (60, 60, 60), 3)
+        for k in range(12):
+            a = k * np.pi / 6
+            p1 = (int(cx + 0.8 * r * np.sin(a)), int(cy - 0.8 * r * np.cos(a)))
+            p2 = (int(cx + 0.95 * r * np.sin(a)), int(cy - 0.95 * r * np.cos(a)))
+            cv2.line(img, p1, p2, (30, 30, 30), 2)
+        cv2.line(img, (cx, cy), (cx + int(0.5 * r), cy - int(0.2 * r)), (20, 20, 20), 3)
+        cv2.line(img, (cx, cy), (cx - int(0.1 * r), cy - int(0.7 * r)), (20, 20, 20), 2)
+
+    def switch(x, y):
+        cv2.rectangle(img, (x, y), (x + 60, y + 44), (240, 240, 240), -1)
+        cv2.rectangle(img, (x, y), (x + 60, y + 44), (150, 150, 150), 1)
+        for k in range(3):
+            cv2.rectangle(img, (x + 8 + k * 17, y + 12), (x + 18 + k * 17, y + 24), (60, 60, 60), -1)
+
+    def chair(x, y, w, h):
+        cv2.rectangle(img, (x, y), (x + w, y + h), (40, 80, 190), -1)
+        for i in range(1, 6):
+            for j in range(4):
+                cx, cy = x + i * (w // 6), y + 20 + j * (h - 40) // 4
+                cv2.rectangle(img, (cx - 6, cy - 6), (cx + 6, cy + 6), (235, 235, 235), -1)
+
+    def grille(x, y, w, h):
+        cv2.rectangle(img, (x, y), (x + w, y + h), (200, 200, 200), -1)
+        for gx in range(x, x + w, 16):
+            cv2.line(img, (gx, y), (gx, y + h), (90, 90, 90), 3)
+        for gy in range(y, y + h, 16):
+            cv2.line(img, (x, gy), (x + w, gy), (90, 90, 90), 3)
+
+    draw = {"clock": clock, "switch": switch, "chair": chair, "grille": grille}
+    for name, *geometry in objects:
+        draw[name](*geometry)
+    return img
 
 
 PS_RENDER = r"""
@@ -99,6 +152,12 @@ def main():
         cv2.imwrite(os.path.join(OUT, rel), render_latin(text, font, size, style))
         manifest.append({"id": sid, "path": rel, "category": cat, "language": lang,
                          "text": text.replace("\n", " "), "style": style, "synthetic": True})
+    for sid, objects in SCENES.items():
+        rel = f"scenes/{sid}.png"
+        os.makedirs(os.path.join(OUT, "scenes"), exist_ok=True)
+        cv2.imwrite(os.path.join(OUT, rel), render_scene(sid, objects))
+        manifest.append({"id": sid, "path": rel, "category": "scenes", "language": "en", "text": "",
+                         "style": "no_text", "synthetic": True, "objects": [o[0] for o in objects]})
     if os.name == "nt":
         for sid, cat, text, lang in INDIC:
             rel = f"{cat}/{sid}.png"

@@ -1,8 +1,9 @@
-"""Classical (OpenCV) text-line localization.
+"""Text-line boxes for line-level recognizers such as TrOCR, which hallucinate on non-text.
 
-Used to feed line-level recognizers such as TrOCR, which hallucinate when given a whole frame.
-It is polarity-agnostic (dark-on-light and light-on-dark boards) and returns no regions for
-blank or near-uniform frames.
+``lines_from_regions`` turns text regions found by a detector engine (EasyOCR/PaddleOCR) into
+line crops; this is what OCRService uses. ``find_text_lines`` is the classical (OpenCV)
+localizer, used only when the TrOCR adapter runs standalone: it also boxes non-text shapes
+(clocks, switches), on which TrOCR invents text (ADR 0007).
 """
 from typing import Any, Dict, List
 
@@ -35,6 +36,24 @@ def _merge_same_line(boxes: List[BBox], gap_ratio: float, min_overlap: float) ->
                 out.append(b)
         boxes = out
     return boxes
+
+
+def lines_from_regions(regions: List[BBox], shape, cfg: Dict[str, Any]) -> List[BBox]:
+    """Merge detector regions (x, y, w, h) into padded lines in reading order, clipped to shape."""
+    h, w = shape[:2]
+    boxes = [b for b in regions if b[2] > 0 and b[3] > 0]
+    boxes = _merge_same_line(boxes, float(cfg["merge_gap_height_ratio"]), float(cfg["merge_min_vertical_overlap"]))
+    boxes.sort(key=lambda b: b[2] * b[3], reverse=True)
+    boxes = boxes[: int(cfg["max_regions"])]
+    boxes.sort(key=lambda b: (b[1], b[0]))
+    pad = int(cfg["padding_px"])
+    out = []
+    for x, y, bw_, bh in boxes:
+        x1, y1 = max(0, x - pad), max(0, y - pad)
+        x2, y2 = min(w, x + bw_ + pad), min(h, y + bh + pad)
+        if x2 > x1 and y2 > y1:
+            out.append((x1, y1, x2 - x1, y2 - y1))
+    return out
 
 
 def find_text_lines(gray: np.ndarray, cfg: Dict[str, Any]) -> List[BBox]:

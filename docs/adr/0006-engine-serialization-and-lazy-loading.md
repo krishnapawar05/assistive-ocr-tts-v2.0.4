@@ -36,3 +36,21 @@ These decisions come from profiling the dev machine (Windows, low-power 12-threa
 - A hung engine stops OCR until it returns, which is logged (`TIMEOUT`, then `BUSY`). This is
   preferred to crashing the process. A future process-isolated engine runner could allow
   killing a hung engine.
+
+## Addendum (2026-09-26): one thread per PaddleOCR engine
+
+Measured: one PaddleOCR engine called from a **new short-lived thread for each call** grew by
+about 0.1 GB per thread (1.42 → 1.52 → 1.63 GB) and crashed natively on the 10th call (segfault).
+The same engine called from **one long-lived thread** stayed at 0.99 GB for 12 of 12 calls.
+PaddlePaddle keeps per-thread native state (oneDNN), and its predictors are not thread-safe.
+
+- The app already meets this constraint: each `OCRService` drives each engine from one
+  long-lived worker thread (`ThreadPoolExecutor(1)`), and a config reload builds new engine
+  instances instead of sharing old ones. **Never share one adapter instance between
+  services or call it from ad-hoc threads.**
+- The test suite shares cached engines across many services, so `tests/ocr/engine_case.py`
+  pins each cached engine to its own worker thread. Before that change, test modules crashed
+  with an access violation.
+- The benchmark's `_call` runs every call on one worker thread per child process. The earlier
+  "PaddleOCR `RuntimeError: Unknown exception` after ~10 calls" came from its thread-per-call
+  harness, not from the engine itself.

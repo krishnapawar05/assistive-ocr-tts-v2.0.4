@@ -24,6 +24,7 @@ import datetime as dt
 import json
 import os
 import platform
+import queue
 import statistics
 import subprocess
 import sys
@@ -42,6 +43,14 @@ TOTAL_TIMEOUT_S = 25 * 60.0
 REPEATS = 3
 FIXTURES = ["room_204", "sentence", "greenboard", "blank"]
 TROCR_EXTRA = ["hand_meet"]
+NO_TEXT_SCENE = "scene_room"          # camera-like scene without text (ADR 0007)
+MODE_FIXTURES = FIXTURES + [NO_TEXT_SCENE]
+# Mode stages that are not a plain ocr.mode: TrOCR as the service runs it (on EasyOCR's text regions).
+MODE_VARIANTS = {
+    "trocr_regions": {"mode": "single_engine", "engine": "trocr", "fallback_order": ["easyocr"],
+                      "text_type": "handwritten"},
+}
+TROCR_REGION_FIXTURES = ["hand_meet", "hand_notes", NO_TEXT_SCENE]
 MEMORY_FLOOR_GB = 0.3           # kill the child if available RAM stays below this ...
 MEMORY_FLOOR_GRACE_S = 1.0      # ... for this long
 MONITOR_INTERVAL_S = 0.25
@@ -55,6 +64,7 @@ STAGES = [
     ("engine:trocr", 0.6),
     ("mode:single_engine", 0.6),
     ("mode:fallback", 0.8),
+    ("mode:trocr_regions", 0.8),
     ("tts:coqui", 0.6),
     ("tts:espeak", 0.3),
     ("tts:windows", 0.3),
@@ -76,22 +86,36 @@ def _emit(fh, event: dict) -> None:
     fh.flush()
 
 
+_WORKER = []  # one long-lived daemon worker thread per child process
+
+
 def _call(fn, timeout: float):
-    """Run fn in a daemon thread. Returns (status, result, error_text, seconds)."""
-    box = {}
+    """Run fn on the child's single worker thread. Returns (status, result, error_text, seconds).
 
-    def run():
-        try:
-            box["result"] = fn()
-        except BaseException as e:  # recorded, never raised past the benchmark
-            box["error"] = f"{type(e).__name__}: {e}"
+    One thread for every call: a PaddlePaddle predictor called from a new thread per call grew
+    ~0.1 GB per thread and failed ("RuntimeError: Unknown exception", then a native crash) after
+    ~9 calls. A timed-out call leaves the worker busy; the child then aborts (abort()).
+    """
+    if not _WORKER:
+        jobs = queue.Queue()
 
+        def worker():
+            while True:
+                job, box, done = jobs.get()
+                try:
+                    box["result"] = job()
+                except BaseException as e:  # recorded, never raised past the benchmark
+                    box["error"] = f"{type(e).__name__}: {e}"
+                done.set()
+
+        threading.Thread(target=worker, daemon=True, name="bench-worker").start()
+        _WORKER.append(jobs)
+    box, done = {}, threading.Event()
     t0 = time.perf_counter()
-    th = threading.Thread(target=run, daemon=True)
-    th.start()
-    th.join(timeout)
+    _WORKER[0].put((fn, box, done))
+    finished = done.wait(timeout)
     elapsed = time.perf_counter() - t0
-    if th.is_alive():
+    if not finished:
         return "TIMEOUT", None, f"no result within {timeout:.0f}s", elapsed
     if "error" in box:
         return "FAILED", None, box["error"], elapsed
@@ -172,7 +196,8 @@ def child_main(stage: str, log_path: str) -> int:
     if kind == "mode":
         from core.frame.processing import Preprocessor, QualityAssessor
         from core.ocr.service import OCRService
-        cfg["ocr"]["mode"] = name
+        cfg["ocr"].update(MODE_VARIANTS.get(name, {"mode": name}))
+        fixtures = TROCR_REGION_FIXTURES if name in MODE_VARIANTS else MODE_FIXTURES
         pre = Preprocessor(cfg["frame"]["preprocess"])
         qa = QualityAssessor(cfg["frame"]["quality"])
         svc = OCRService(cfg["ocr"], cfg["text"])
@@ -182,21 +207,22 @@ def child_main(stage: str, log_path: str) -> int:
         print(f"[{time.monotonic() - t_start:7.1f}s] {stage:20s} loaded {statuses} load={load_s:.1f}s", flush=True)
         if status != "OK":
             abort(f"initialize: {status} {err}")
-        frames = {fid: image(fid) for fid in FIXTURES}
+        frames = {fid: image(fid) for fid in fixtures}
 
         def frame_step(frame):
             report = qa.assess(frame)
             if not report.usable:
                 return {"outcome": "unusable_frame", "reasons": report.reasons, "text": "", "engines_run": []}
             d = svc.recognize(pre.prepare(frame))
-            return {"outcome": d.reason, "text": d.text, "engines_run": d.engines_run, "errors": d.errors}
+            return {"outcome": d.reason, "text": d.text, "engines_run": d.engines_run, "errors": d.errors,
+                    "skipped": d.skipped, "region_source": d.region_source}
 
-        st, _, err, sec = _call(lambda: frame_step(frames["room_204"]), CALL_TIMEOUT_S)
+        st, _, err, sec = _call(lambda: frame_step(frames[fixtures[0]]), CALL_TIMEOUT_S)
         _emit(fh, {"event": "warmup", "status": st, "seconds": round(sec, 3), "error": err})
-        _progress(stage, "room_204", "warm", st, sec, t_start, "(not counted)")
+        _progress(stage, fixtures[0], "warm", st, sec, t_start, "(not counted)")
         if st == "TIMEOUT":
             abort("warm-up timed out")
-        for fid in FIXTURES:
+        for fid in fixtures:
             for rep in range(1, REPEATS + 1):
                 st, res, err, sec = _call(lambda: frame_step(frames[fid]), CALL_TIMEOUT_S)
                 res = res or {}
@@ -205,6 +231,7 @@ def child_main(stage: str, log_path: str) -> int:
                 ev = {"event": "sample", "fixture": fid, "repeat": rep, "status": st, "seconds": round(sec, 3),
                       "outcome": res.get("outcome"), "engines_run": res.get("engines_run"),
                       "engine_errors": res.get("errors"), "text": res.get("text", "")[:80],
+                      "skipped": res.get("skipped"), "region_source": res.get("region_source"),
                       "cer": round(cer(MANIFEST[fid]["text"], res.get("text", "")), 3) if st == "OK" else None,
                       "error": err}
                 _emit(fh, ev)
@@ -478,13 +505,19 @@ def write_report(run: dict) -> None:
                 if ok:
                     x = ok[0]
                     engines = "+".join(x.get("engines_run") or []) or "(quality gate)"
+                    skipped = ", ".join(f"{k} skipped: {v}" for k, v in (x.get("skipped") or {}).items())
+                    source = f", regions from {x['region_source']}" if x.get("region_source") else ""
                     parts.append(f"{fid}: {x.get('outcome')} {engines} → `{x.get('text', '')[:24]}` "
-                                 f"({len(ok)} OK{', ' + ', '.join(bad) if bad else ''})")
+                                 f"({len(ok)} OK{', ' + ', '.join(bad) if bad else ''}"
+                                 f"{'; ' + skipped if skipped else ''}{source})")
                 else:
                     parts.append(f"{fid}: {', '.join(bad)}")
             L.append(f"- **{s['stage'][5:]}**: " + "; ".join(parts))
         elif s["stage"].startswith("mode:"):
             L.append(f"- **{s['stage'][5:]}**: {classify(s)}" + (f" — {s['skip_reason']}" if s.get("skip_reason") else ""))
+
+    L += ["", "`trocr_regions` = single_engine with TrOCR selected (text_type handwritten): EasyOCR runs only "
+          "to find text regions and TrOCR reads them (ADR 0007). TrOCR never sees a whole frame.", ""]
 
     L += ["", "## 5. TTS results (no repeated audible playback)", "",
           "| Engine | Status | Load s | Measured | Done | Median s | Min s | Max s | Peak RSS MB | Notes |",
@@ -516,7 +549,8 @@ def write_report(run: dict) -> None:
 
     L += ["", "## 8. End-to-end observations", ""] + [f"- {o}" for o in run["observations"]]
     L += ["", "## 9. Known limitations", "",
-          "- Synthetic, rendered fixtures (4 images + 1 handwriting image): they verify function and bound latency; "
+          "- Synthetic, rendered fixtures (4 images, 2 handwriting images, 1 no-text room scene): they verify function "
+          "and bound latency; "
           "they say nothing about accuracy on real classroom captures.",
           "- Measured on a Windows laptop with little free RAM; other applications affect latency. No Jetson "
           "numbers. No camera capture timing (the camera is not opened by the benchmark).",
@@ -529,7 +563,8 @@ def write_report(run: dict) -> None:
     L += ["## 10. Exact benchmark configuration", "",
           f"- Script: `tests/benchmarks/isolated_benchmark.py` (commit {run['git_commit']})",
           f"- Config: `core.config.DEFAULT_CONFIG` (not the local `config.json`); TTS volume forced to 0.",
-          f"- Fixtures: {', '.join(FIXTURES)} (+ {', '.join(TROCR_EXTRA)} for TrOCR); {REPEATS} timed repeats; "
+          f"- Fixtures: engines {', '.join(FIXTURES)} (+ {', '.join(TROCR_EXTRA)} for TrOCR); modes "
+          f"{', '.join(MODE_FIXTURES)}; trocr_regions {', '.join(TROCR_REGION_FIXTURES)}; {REPEATS} timed repeats; "
           "1 untimed warm-up call per stage after loading.",
           f"- Timeouts: {CALL_TIMEOUT_S:.0f} s per OCR/TTS call, {CHILD_TIMEOUT_S / 60:.0f} min per child process, "
           f"{TOTAL_TIMEOUT_S / 60:.0f} min total.",
@@ -560,6 +595,14 @@ def observations(stages: list) -> list:
     if fb and fb.get("engines_loaded_at_end"):
         loaded = [n for n, st in fb["engines_loaded_at_end"].items() if st == "READY"]
         obs.append(f"Fallback mode loaded only {', '.join(loaded)} for these fixtures (lazy loading of fallback engines).")
+    for k, s in by.items():
+        scene = [x for x in s["samples"] if x["fixture"] == NO_TEXT_SCENE and x["status"] == "OK"]
+        if k.startswith("mode:") and scene:
+            texts = sorted({x.get("text", "") for x in scene})
+            trocr_ran = any("trocr" in (x.get("engines_run") or []) for x in scene)
+            obs.append(f"{k[5:]}: no-text scene → text {texts}; TrOCR "
+                       f"{'RAN' if trocr_ran else 'not run (' + str(scene[0].get('skipped')) + ')'}; "
+                       f"median {statistics.median([x['seconds'] for x in scene]):.2f} s.")
     for k in ("mode:single_engine", "mode:fallback", "mode:ensemble"):
         s = by.get(k)
         if s and s["samples"]:

@@ -1,8 +1,13 @@
 """TrOCR adapter (line-level handwriting recognizer).
 
-v2.0.4 ran TrOCR on the whole frame, where it produced text even for blank frames. Here it
-only sees line crops from ``regions.find_text_lines``, and each line gets a real confidence
-(mean token probability), so hallucinated lines can be dropped.
+v2.0.4 ran TrOCR on the whole frame, where it produced text even for blank frames. TrOCR is a
+recognizer, not a detector: on any crop it is given it tends to produce *some* text (a wall clock
+plus a light switch was read as "0 511" at 0.71 confidence). So OCRService runs it only on text
+regions that a detector engine found in the same frame (``needs_text_regions``, ADR 0007). Each
+line gets a real confidence (mean token probability), so weak lines are still dropped.
+
+Standalone ``recognize(image)`` (adapter tests, benchmarks) falls back to the classical line
+localizer ``regions.find_text_lines``; the service never uses that path.
 """
 from typing import List
 
@@ -10,13 +15,14 @@ import cv2
 import numpy as np
 
 from .base import OCRAdapter, logger
-from .regions import find_text_lines
-from .types import EngineStatus, OCRResult
+from .regions import find_text_lines, lines_from_regions
+from .types import BBox, EngineStatus, OCRResult
 
 
 class TrOCRAdapter(OCRAdapter):
     name = "trocr"
     input_kind = "gray"
+    needs_text_regions = True
 
     def __init__(self, engine_cfg, language, region_cfg):
         super().__init__(engine_cfg, language)
@@ -43,7 +49,12 @@ class TrOCRAdapter(OCRAdapter):
         return EngineStatus.READY, f"trocr {model}"
 
     def _recognize(self, image: np.ndarray) -> OCRResult:
-        boxes = find_text_lines(image, self.region_cfg)
+        return self._recognize_lines(image, find_text_lines(image, self.region_cfg))
+
+    def _recognize_regions(self, image: np.ndarray, regions: List[BBox]) -> OCRResult:
+        return self._recognize_lines(image, lines_from_regions(regions, image.shape, self.region_cfg))
+
+    def _recognize_lines(self, image: np.ndarray, boxes: List[BBox]) -> OCRResult:
         if not boxes:
             return OCRResult(metadata={"regions": 0})
         rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB) if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
