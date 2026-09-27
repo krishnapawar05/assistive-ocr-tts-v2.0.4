@@ -66,16 +66,53 @@ def _asset_version(name: str) -> str:
 
 ASSET_VERSIONS = {name: _asset_version(name) for name in ("dashboard.js", "style.css")}
 
-pipeline = AssistivePipeline(cfg)
+pipeline: Optional[AssistivePipeline] = None
 _reload_lock = threading.Lock()
+_pipeline_ready = threading.Event()
+_pipeline_error: Optional[str] = None
+
+
+def _init_pipeline_bg():
+    global pipeline, _pipeline_error
+    try:
+        logger.info("Initializing AssistivePipeline in background...")
+        p = AssistivePipeline(cfg)
+        pipeline = p
+        logger.info("AssistivePipeline ready.")
+    except Exception as e:
+        _pipeline_error = str(e)
+        logger.exception("AssistivePipeline initialization failed: %s", e)
+    finally:
+        _pipeline_ready.set()
+
+
+_init_thread = threading.Thread(target=_init_pipeline_bg, name="pipeline-init", daemon=True)
+_init_thread.start()
 
 
 def current() -> AssistivePipeline:
-    """The live pipeline, or HTTP 503 while a config reload is rebuilding it."""
-    p = pipeline
-    if p is None:
-        raise HTTPException(status_code=503, detail="Reloading configuration, try again shortly")
-    return p
+    """The live pipeline, or wait if initializing, or HTTP 503 if reloading or failed."""
+    global pipeline
+    if pipeline is None:
+        if not _pipeline_ready.is_set():
+            _pipeline_ready.wait(timeout=30.0)
+        if _pipeline_error is not None:
+            raise HTTPException(status_code=500, detail=f"Pipeline initialization failed: {_pipeline_error}")
+        if pipeline is None:
+            raise HTTPException(status_code=503, detail="Pipeline initializing, try again shortly")
+    return pipeline
+
+
+@app.get("/health")
+def health():
+    """Fast, lightweight healthcheck endpoint for Railway and container orchestrators.
+    Never blocks on models, camera, or audio hardware."""
+    is_cloud = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID") or os.environ.get("ENVIRONMENT", "").lower() == "railway")
+    return {
+        "status": "ok",
+        "environment": "railway" if is_cloud else os.environ.get("ENVIRONMENT", "local"),
+        "pipeline_ready": pipeline is not None
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -84,8 +121,52 @@ async def dashboard(request: Request):
     # Engines that cannot run (unavailable or failed); READY and not-yet-loaded ones are usable.
     unusable = {name: d["status"] for name, d in p.diagnostics()["ocr_engines"].items()
                 if d["status"] not in (EngineStatus.READY.value, EngineStatus.UNINITIALIZED.value)}
+    is_cloud = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID") or os.environ.get("ENVIRONMENT", "").lower() == "railway")
     return templates.TemplateResponse(request, "dashboard.html", {
-        "config": cfg.data, "voices": p.voices(), "assets": ASSET_VERSIONS, "unusable_ocr": unusable})
+        "config": cfg.data, "voices": p.voices(), "assets": ASSET_VERSIONS, "unusable_ocr": unusable,
+        "is_cloud": is_cloud})
+
+
+@app.post("/api/process-frame")
+async def api_process_frame(request: Request):
+    """Process an image frame submitted by the client (browser camera mode).
+    Accepts JSON with base64 image or raw image binary."""
+    import base64
+    import cv2
+    import numpy as np
+
+    p = current()
+    content_type = request.headers.get("content-type", "")
+
+    img_bytes = None
+    if "application/json" in content_type:
+        try:
+            payload = await request.json()
+            b64_data = payload.get("image", "")
+            if "," in b64_data:
+                b64_data = b64_data.split(",", 1)[1]
+            img_bytes = base64.b64decode(b64_data)
+        except Exception as e:
+            return JSONResponse({"status": "error", "message": f"invalid JSON/base64: {e}"}, status_code=400)
+    else:
+        img_bytes = await request.body()
+
+    if not img_bytes:
+        return JSONResponse({"status": "error", "message": "no image data provided"}, status_code=400)
+
+    np_arr = np.frombuffer(img_bytes, np.uint8)
+    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if frame is None:
+        return JSONResponse({"status": "error", "message": "could not decode image"}, status_code=400)
+
+    outcome = p.process_frame(frame)
+    return JSONResponse({
+        "status": outcome.status,
+        "text": outcome.text or "",
+        "engine": outcome.engine or "",
+        "confidence": round(outcome.confidence, 3) if outcome.confidence else 0.0,
+        "details": outcome.details
+    })
 
 
 @app.post("/api/start")
