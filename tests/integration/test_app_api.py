@@ -277,6 +277,68 @@ class AppAPITest(unittest.TestCase):
     def test_history(self):
         self.assertIn("history", self.client.get("/api/history").json())
 
+    def test_accessibility_landmarks_and_controls(self):
+        """Verify semantic landmarks, screen-reader live regions, and primary buttons."""
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        html = r.text
+        # Semantic landmarks
+        self.assertIn('class="skip-link"', html)
+        self.assertIn('role="banner"', html)
+        self.assertIn('role="main"', html)
+        # Dedicated polite screen reader announcement channel
+        self.assertIn('id="srLiveAnnouncements"', html)
+        self.assertIn('aria-live="polite"', html)
+        # Primary student controls and accessible labels
+        self.assertIn('id="startBtn"', html)
+        self.assertIn('id="stopBtn"', html)
+        self.assertIn('id="replayBtn"', html)
+        self.assertIn('id="stopSpeechBtn"', html)
+        self.assertIn('aria-label=', html)
+        self.assertIn('<kbd class="shortcut-tag">Space</kbd>', html)
+        self.assertIn('<kbd class="shortcut-tag">R</kbd>', html)
+        self.assertIn('<kbd class="shortcut-tag">Esc</kbd>', html)
+        # High contrast and large font controls
+        self.assertIn('id="contrastToggle"', html)
+        self.assertIn('id="increaseFont"', html)
+        # Diagnostics drawer preserves all settings forms
+        self.assertIn('id="diagnosticsSection"', html)
+        self.assertIn('id="ocrForm"', html)
+        self.assertIn('id="ttsForm"', html)
+        self.assertIn('id="cameraForm"', html)
+
+    def test_stop_speech_api(self):
+        """Verify POST /api/stop-speech silences audio queue and returns 200."""
+        self.client.post("/api/speak", json={"text": "Speaking something long"})
+        r = self.client.post("/api/stop-speech")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["status"], "stopped")
+        self.assertEqual(self.app_module.pipeline.audio.pending(), 0)
+
+    def test_replay_latest_api(self):
+        """Verify POST /api/replay-latest replays last recognized text."""
+        # When no text recognized yet
+        self.app_module.pipeline.last_text = ""
+        r_empty = self.client.post("/api/replay-latest")
+        self.assertEqual(r_empty.status_code, 404)
+        self.assertEqual(r_empty.json()["status"], "no_text")
+
+        # When valid text exists
+        self.app_module.pipeline.last_text = "Welcome to Science Class"
+        r_valid = self.client.post("/api/replay-latest")
+        self.assertEqual(r_valid.status_code, 200)
+        self.assertEqual(r_valid.json()["status"], "replaying")
+        self.assertEqual(r_valid.json()["text"], "Welcome to Science Class")
+        self.assertTrue(self.app_module.pipeline.audio.wait_idle(60))
+
+    def test_dashboard_js_guards_input_shortcuts(self):
+        """Ensure dashboard.js contains safety guard against hijacking typing in form inputs."""
+        with open(DASHBOARD_JS, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("matches('input, select, textarea')", content)
+        self.assertIn("e.code === 'Space'", content)
+        self.assertIn("e.key === 'Escape'", content)
+
 
 if __name__ == "__main__":
     unittest.main()

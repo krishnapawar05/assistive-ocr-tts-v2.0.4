@@ -2,47 +2,77 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Assistive OCR → TTS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smart Vision Assist — Assistive OCR &amp; Speech</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="/static/style.css?v={{ assets['style.css'] }}" rel="stylesheet">
 </head>
 <body id="body">
-<nav class="navbar navbar-expand-lg navbar-light bg-light" role="navigation" aria-label="Main Navigation">
-  <div class="container-fluid">
-    <a class="navbar-brand" href="/">Assistive OCR→TTS</a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarsExample" aria-controls="navbarsExample" aria-expanded="false" aria-label="Toggle navigation">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div id="navbarsExample" class="collapse navbar-collapse">
-      <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-        <li class="nav-item"><a class="nav-link" href="#dashboard">Dashboard</a></li>
-        <li class="nav-item"><a class="nav-link" href="#ocr">OCR</a></li>
-        <li class="nav-item"><a class="nav-link" href="#tts">TTS</a></li>
-        <li class="nav-item"><a class="nav-link" href="#camera">Camera</a></li>
-        <li class="nav-item"><a class="nav-link" href="#settings">Settings</a></li>
-      </ul>
-      <div class="d-flex">
-        <button id="contrastToggle" class="btn btn-outline-dark me-2" aria-pressed="false">High contrast</button>
-        <button id="increaseFont" class="btn btn-outline-secondary">A+</button>
+  <!-- Accessibility Skip Link -->
+  <a href="#mainContent" class="skip-link">Skip to main content</a>
+
+  <!-- Top Accessible Header -->
+  <header class="app-header" role="banner">
+    <div class="container-fluid d-flex flex-wrap align-items-center justify-content-between py-2 px-3">
+      <div class="d-flex align-items-center">
+        <h1 class="app-title m-0">
+          <span aria-hidden="true">👁️</span> Smart Vision Assist
+          <span class="version-tag">v2.0.4</span>
+        </h1>
+      </div>
+      
+      <!-- Quick Keyboard Hints for Assistive Users -->
+      <div class="shortcut-hints d-none d-md-flex align-items-center text-muted" aria-label="Keyboard shortcuts guide">
+        <span class="me-3"><kbd>Space</kbd> Start/Pause</span>
+        <span class="me-3"><kbd>R</kbd> Replay</span>
+        <span><kbd>Esc</kbd> Stop Speech</span>
+      </div>
+
+      <!-- Accessibility Toggles -->
+      <div class="accessibility-controls d-flex align-items-center">
+        <button id="contrastToggle" class="btn btn-outline-dark me-2" aria-pressed="false" aria-label="Toggle high contrast display mode">
+          <span aria-hidden="true">🌓</span> High Contrast
+        </button>
+        <button id="increaseFont" class="btn btn-outline-secondary" aria-pressed="false" aria-label="Toggle large font size">
+          <span aria-hidden="true">A+</span> Large Font
+        </button>
       </div>
     </div>
-  </div>
-</nav>
-<main class="container my-3" role="main">
-  {% block content %}{% endblock %}
-</main>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-  // Accessibility toggles
-  const body = document.getElementById('body');
-  document.getElementById('contrastToggle').addEventListener('click', function(){
-    body.classList.toggle('high-contrast');
-    this.setAttribute('aria-pressed', String(body.classList.contains('high-contrast')));
-  });
-  document.getElementById('increaseFont').addEventListener('click', function(){
-    document.body.classList.toggle('large-font');
-  });
-</script>
+  </header>
+
+  <!-- Main Landmark -->
+  <main id="mainContent" class="container-fluid px-3 py-3" role="main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Accessibility visual toggles
+    const body = document.getElementById('body');
+    const contrastBtn = document.getElementById('contrastToggle');
+    const fontBtn = document.getElementById('increaseFont');
+
+    if (contrastBtn) {
+      contrastBtn.addEventListener('click', function() {
+        body.classList.toggle('high-contrast');
+        const isHighContrast = body.classList.contains('high-contrast');
+        this.setAttribute('aria-pressed', String(isHighContrast));
+        if (isHighContrast) {
+          this.classList.remove('btn-outline-dark');
+          this.classList.add('btn-warning');
+        } else {
+          this.classList.remove('btn-warning');
+          this.classList.add('btn-outline-dark');
+        }
+      });
+    }
+
+    if (fontBtn) {
+      fontBtn.addEventListener('click', function() {
+        body.classList.toggle('large-font');
+        this.setAttribute('aria-pressed', String(body.classList.contains('large-font')));
+      });
+    }
+  </script>
 </body>
 </html>

@@ -1,4 +1,5 @@
-// Modern Dashboard JavaScript for Assistive OCR→TTS
+// Smart Vision Assist v2.0.4 — Accessible Dashboard JavaScript
+// Audio-First, Accessible, Screen-Reader and Keyboard Enabled
 
 class Dashboard {
     constructor(config, voices) {
@@ -7,87 +8,172 @@ class Dashboard {
         this.statusInterval = null;
         this.historyInterval = null;
         this.isRunning = false;
+        this.lastAnnouncement = '';
+        this.lastTextSeen = '';
+        this.lastMovingState = null;
+        this.lastCameraState = null;
+        this.lastSpeakingState = null;
     }
 
     init() {
         this.setupEventListeners();
+        this.setupKeyboardShortcuts();
         this.updateRangeValues();
         this.loadConfig();
         this.startPolling();
-        this.showAlert('info', 'Dashboard loaded. Click "Start" to begin OCR processing.');
+        this.announce('Smart Vision Assist ready. Press Space bar or click Start System to begin reading.');
+        this.showAlert('info', 'System ready. Press Space to start reading, R to replay text, Esc to stop speech.');
     }
 
     setupEventListeners() {
-        // Control buttons
-        document.getElementById('startBtn').addEventListener('click', () => this.startPipeline());
-        document.getElementById('stopBtn').addEventListener('click', () => this.stopPipeline());
-        document.getElementById('replayBtn').addEventListener('click', () => this.replayAudio());
-        document.getElementById('testCameraBtn').addEventListener('click', () => this.testCamera());
-        document.getElementById('testOcrBtn').addEventListener('click', () => this.testOCR());
+        // Primary Control buttons
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const replayBtn = document.getElementById('replayBtn');
+        const stopSpeechBtn = document.getElementById('stopSpeechBtn');
+        const testCameraBtn = document.getElementById('testCameraBtn');
+        const testOcrBtn = document.getElementById('testOcrBtn');
 
-        // Form submissions
-        document.getElementById('ocrForm').addEventListener('submit', (e) => this.saveOCRConfig(e));
-        document.getElementById('ttsForm').addEventListener('submit', (e) => this.saveTTSConfig(e));
-        document.getElementById('cameraForm').addEventListener('submit', (e) => this.saveCameraConfig(e));
+        if (startBtn) startBtn.addEventListener('click', () => this.startPipeline());
+        if (stopBtn) stopBtn.addEventListener('click', () => this.stopPipeline());
+        if (replayBtn) replayBtn.addEventListener('click', () => this.replayAudio());
+        if (stopSpeechBtn) stopSpeechBtn.addEventListener('click', () => this.stopSpeech());
+        if (testCameraBtn) testCameraBtn.addEventListener('click', () => this.testCamera());
+        if (testOcrBtn) testOcrBtn.addEventListener('click', () => this.testOCR());
+
+        // Form submissions (Diagnostics & Settings)
+        const ocrForm = document.getElementById('ocrForm');
+        const ttsForm = document.getElementById('ttsForm');
+        const cameraForm = document.getElementById('cameraForm');
+
+        if (ocrForm) ocrForm.addEventListener('submit', (e) => this.saveOCRConfig(e));
+        if (ttsForm) ttsForm.addEventListener('submit', (e) => this.saveTTSConfig(e));
+        if (cameraForm) cameraForm.addEventListener('submit', (e) => this.saveCameraConfig(e));
 
         // Range inputs - update display values
-        document.getElementById('captureInterval').addEventListener('input', (e) => {
-            document.getElementById('captureIntervalValue').textContent = parseFloat(e.target.value).toFixed(1);
+        const rangeMap = [
+            ['captureInterval', 'captureIntervalValue', 1],
+            ['minConfidence', 'minConfidenceValue', 2],
+            ['minTextLen', 'minTextLenValue', 0],
+            ['ttsSpeed', 'ttsSpeedValue', 1],
+            ['ttsVolume', 'ttsVolumeValue', 1]
+        ];
+
+        rangeMap.forEach(([inputId, valId, decimals]) => {
+            const input = document.getElementById(inputId);
+            const valSpan = document.getElementById(valId);
+            if (input && valSpan) {
+                input.addEventListener('input', (e) => {
+                    const num = parseFloat(e.target.value);
+                    valSpan.textContent = decimals > 0 ? num.toFixed(decimals) : String(parseInt(num, 10));
+                });
+            }
         });
-        document.getElementById('minConfidence').addEventListener('input', (e) => {
-            document.getElementById('minConfidenceValue').textContent = parseFloat(e.target.value).toFixed(2);
+    }
+
+    setupKeyboardShortcuts() {
+        window.addEventListener('keydown', (e) => {
+            // Never hijack typing inside text inputs, dropdowns, or textareas
+            if (e.target && (e.target.matches('input, select, textarea') || e.target.isContentEditable)) {
+                return;
+            }
+
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (this.isRunning) {
+                    this.stopPipeline();
+                } else {
+                    this.startPipeline();
+                }
+            } else if (e.key === 'r' || e.key === 'R') {
+                e.preventDefault();
+                this.replayAudio();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                this.stopSpeech();
+            }
         });
-        document.getElementById('minTextLen').addEventListener('input', (e) => {
-            document.getElementById('minTextLenValue').textContent = e.target.value;
-        });
-        document.getElementById('ttsSpeed').addEventListener('input', (e) => {
-            document.getElementById('ttsSpeedValue').textContent = parseFloat(e.target.value).toFixed(1);
-        });
-        document.getElementById('ttsVolume').addEventListener('input', (e) => {
-            document.getElementById('ttsVolumeValue').textContent = parseFloat(e.target.value).toFixed(1);
-        });
+    }
+
+    announce(text) {
+        const sr = document.getElementById('srLiveAnnouncements');
+        if (!sr || !text || text === this.lastAnnouncement) return;
+        this.lastAnnouncement = text;
+        sr.textContent = '';
+        setTimeout(() => {
+            sr.textContent = text;
+        }, 50);
     }
 
     updateRangeValues() {
-        // Initialize range value displays
-        const captureInterval = document.getElementById('captureInterval').value;
-        document.getElementById('captureIntervalValue').textContent = parseFloat(captureInterval).toFixed(1);
-        
-        const minConfidence = document.getElementById('minConfidence').value;
-        document.getElementById('minConfidenceValue').textContent = parseFloat(minConfidence).toFixed(2);
-        
-        const minTextLen = document.getElementById('minTextLen').value;
-        document.getElementById('minTextLenValue').textContent = minTextLen;
-        
-        const ttsSpeed = document.getElementById('ttsSpeed').value;
-        document.getElementById('ttsSpeedValue').textContent = parseFloat(ttsSpeed).toFixed(1);
-        
-        const ttsVolume = document.getElementById('ttsVolume').value;
-        document.getElementById('ttsVolumeValue').textContent = parseFloat(ttsVolume).toFixed(1);
+        const captureInterval = document.getElementById('captureInterval');
+        const minConfidence = document.getElementById('minConfidence');
+        const minTextLen = document.getElementById('minTextLen');
+        const ttsSpeed = document.getElementById('ttsSpeed');
+        const ttsVolume = document.getElementById('ttsVolume');
+
+        if (captureInterval) {
+            const span = document.getElementById('captureIntervalValue');
+            if (span) span.textContent = parseFloat(captureInterval.value).toFixed(1);
+        }
+        if (minConfidence) {
+            const span = document.getElementById('minConfidenceValue');
+            if (span) span.textContent = parseFloat(minConfidence.value).toFixed(2);
+        }
+        if (minTextLen) {
+            const span = document.getElementById('minTextLenValue');
+            if (span) span.textContent = minTextLen.value;
+        }
+        if (ttsSpeed) {
+            const span = document.getElementById('ttsSpeedValue');
+            if (span) span.textContent = parseFloat(ttsSpeed.value).toFixed(1);
+        }
+        if (ttsVolume) {
+            const span = document.getElementById('ttsVolumeValue');
+            if (span) span.textContent = parseFloat(ttsVolume.value).toFixed(1);
+        }
     }
 
     loadConfig() {
-        // Load config values into form
         if (this.config.ocr) {
-            document.getElementById('ocrEngine').value = this.config.ocr.engine || 'easyocr';
-            document.getElementById('ocrLang').value = this.config.ocr.language || 'en';
-            document.getElementById('ocrMode').value = this.config.ocr.mode || 'fallback';
-            document.getElementById('captureInterval').value = this.config.ocr.capture_interval || 0.5;
-            document.getElementById('minConfidence').value = this.config.ocr.min_confidence || 0.5;
-            document.getElementById('minTextLen').value = this.config.ocr.min_text_len || 3;
+            const ocr = this.config.ocr;
+            const elEngine = document.getElementById('ocrEngine');
+            const elLang = document.getElementById('ocrLang');
+            const elMode = document.getElementById('ocrMode');
+            const elCap = document.getElementById('captureInterval');
+            const elConf = document.getElementById('minConfidence');
+            const elLen = document.getElementById('minTextLen');
+
+            if (elEngine) elEngine.value = ocr.engine || 'easyocr';
+            if (elLang) elLang.value = ocr.language || 'en';
+            if (elMode) elMode.value = ocr.mode || 'fallback';
+            if (elCap) elCap.value = ocr.capture_interval || 0.5;
+            if (elConf) elConf.value = ocr.min_confidence || 0.5;
+            if (elLen) elLen.value = ocr.min_text_len || 3;
         }
 
         if (this.config.tts) {
-            document.getElementById('ttsEngine').value = this.config.tts.engine || 'coqui';
-            document.getElementById('ttsVoice').value = this.config.tts.voice || 'p335';
-            document.getElementById('ttsSpeed').value = this.config.tts.speed || 1.0;
-            document.getElementById('ttsVolume').value = this.config.tts.volume || 0.9;
+            const tts = this.config.tts;
+            const elEngine = document.getElementById('ttsEngine');
+            const elVoice = document.getElementById('ttsVoice');
+            const elSpeed = document.getElementById('ttsSpeed');
+            const elVol = document.getElementById('ttsVolume');
+
+            if (elEngine) elEngine.value = tts.engine || 'coqui';
+            if (elVoice) elVoice.value = tts.voice || 'p335';
+            if (elSpeed) elSpeed.value = tts.speed || 1.0;
+            if (elVol) elVol.value = tts.volume || 0.9;
         }
 
         if (this.config.camera) {
-            document.getElementById('cameraSource').value = this.config.camera.source_type || 'opencv';
-            document.getElementById('cameraId').value = this.config.camera.camera_id || 0;
-            document.getElementById('resolution').value = this.config.camera.resolution || '1080p';
+            const cam = this.config.camera;
+            const elSource = document.getElementById('cameraSource');
+            const elId = document.getElementById('cameraId');
+            const elRes = document.getElementById('resolution');
+
+            if (elSource) elSource.value = cam.source_type || 'opencv';
+            if (elId) elId.value = cam.camera_id || 0;
+            if (elRes) elRes.value = cam.resolution || '720p';
         }
 
         this.updateRangeValues();
@@ -99,13 +185,14 @@ class Dashboard {
             const data = await response.json();
             if (data.status === 'started') {
                 this.isRunning = true;
-                this.updateStatus(true);
-                this.showAlert('success', 'Pipeline started successfully!');
+                this.updateStatusBadge(true);
+                this.announce('System started. Camera active. Point camera at document.');
+                this.showAlert('success', 'System started. Point camera at text.');
             } else {
-                this.showAlert('danger', 'Failed to start pipeline');
+                this.showAlert('danger', 'Failed to start camera system.');
             }
         } catch (error) {
-            this.showAlert('danger', `Error starting pipeline: ${error.message}`);
+            this.showAlert('danger', `Error starting system: ${error.message}`);
         }
     }
 
@@ -115,28 +202,57 @@ class Dashboard {
             const data = await response.json();
             if (data.status === 'stopped') {
                 this.isRunning = false;
-                this.updateStatus(false);
-                this.showAlert('info', 'Pipeline stopped');
+                this.updateStatusBadge(false);
+                this.announce('System paused.');
+                this.showAlert('info', 'System paused.');
             } else {
-                this.showAlert('danger', 'Failed to stop pipeline');
+                this.showAlert('danger', 'Failed to pause system.');
             }
         } catch (error) {
-            this.showAlert('danger', `Error stopping pipeline: ${error.message}`);
+            this.showAlert('danger', `Error pausing system: ${error.message}`);
+        }
+    }
+
+    async stopSpeech() {
+        try {
+            const response = await fetch('/api/stop-speech', { method: 'POST' });
+            if (response.ok) {
+                this.announce('Speech stopped.');
+                const speechBadge = document.getElementById('speechBadge');
+                if (speechBadge) {
+                    speechBadge.textContent = 'Speech: Stopped';
+                    speechBadge.className = 'badge status-pill bg-secondary';
+                }
+                this.showAlert('info', 'Speech stopped and queue cleared.');
+            }
+        } catch (error) {
+            this.showAlert('warning', `Could not stop speech: ${error.message}`);
         }
     }
 
     async replayAudio() {
         try {
+            // First attempt to fetch synthesized WAV audio
             const response = await fetch('/api/replay');
             if (response.status === 200) {
                 const audioBlob = await response.blob();
                 const audioUrl = URL.createObjectURL(audioBlob);
                 const audio = new Audio(audioUrl);
                 audio.play();
-                this.showAlert('success', 'Playing last audio...');
+                this.announce('Replaying latest audio.');
+                this.showAlert('success', 'Replaying last recognized audio...');
+                return;
+            }
+
+            // Fallback: Re-speak latest recognized text through server TTS
+            const fallbackResponse = await fetch('/api/replay-latest', { method: 'POST' });
+            const data = await fallbackResponse.json();
+            if (fallbackResponse.ok && data.status === 'replaying') {
+                this.announce(`Replaying: ${data.text.substring(0, 60)}`);
+                this.showAlert('success', `Replaying text: "${data.text.substring(0, 50)}..."`);
             } else {
-                const data = await response.json();
-                this.showAlert('warning', data.message || 'No audio available');
+                this.announce('No recognized text available to replay.');
+                this.showAlert('warning', data.message || 'No text recognized yet to replay.');
             }
         } catch (error) {
             this.showAlert('danger', `Error replaying audio: ${error.message}`);
@@ -145,22 +261,26 @@ class Dashboard {
 
     async testCamera() {
         const btn = document.getElementById('testCameraBtn');
+        if (!btn) return;
         const originalText = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = '<span class="loading-spinner"></span> Testing...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Testing...';
 
         try {
             const response = await fetch('/api/test-camera');
             const data = await response.json();
             
             if (data.status === 'ok') {
-                this.showAlert('success', 
-                    `Camera ${data.message || 'working'}! Frame shape: ${data.frame_shape ? data.frame_shape.join('x') : 'N/A'}`);
+                const res = data.frame_shape ? `${data.frame_shape[1]}x${data.frame_shape[0]}` : 'N/A';
+                this.announce(`Camera hardware working. Resolution ${res}.`);
+                this.showAlert('success', `Camera working! Resolution: ${res}`);
             } else {
-                this.showAlert('danger', `Camera test failed: ${data.message || 'Unknown error'}`);
+                const cleanMsg = data.message ? this.humanizeError(data.message) : 'Camera unavailable';
+                this.announce(`Camera test failed: ${cleanMsg}`);
+                this.showAlert('danger', `Camera test: ${cleanMsg}`);
             }
         } catch (error) {
-            this.showAlert('danger', `Error testing camera: ${error.message}`);
+            this.showAlert('danger', `Camera error: ${error.message}`);
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalText;
@@ -169,23 +289,39 @@ class Dashboard {
 
     async testOCR() {
         const btn = document.getElementById('testOcrBtn');
+        if (!btn) return;
         const originalText = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = '<span class="loading-spinner"></span> Testing...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Running diagnostics...';
         try {
             const response = await fetch('/api/test-ocr');
             const data = await response.json();
             if (data.status === 'ok') {
                 this.showAlert('info', Dashboard.formatOcrTest(data), true);
+                if (data.ocr_test_on_frame && data.ocr_test_on_frame.text) {
+                    this.announce(`OCR test recognized: ${data.ocr_test_on_frame.text}`);
+                }
             } else {
-                this.showAlert('danger', `OCR test failed: ${this.escapeHtml(data.message || data.detail || 'Unknown error')}`);
+                this.showAlert('danger', `OCR diagnostic error: ${this.escapeHtml(data.message || data.detail || 'Unknown error')}`);
             }
         } catch (error) {
-            this.showAlert('danger', `Error testing OCR: ${this.escapeHtml(error.message)}`);
+            this.showAlert('danger', `Error running OCR diagnostic: ${this.escapeHtml(error.message)}`);
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalText;
         }
+    }
+
+    humanizeError(rawError) {
+        if (!rawError) return 'System unavailable';
+        const lower = String(rawError).toLowerCase();
+        if (lower.includes('cannot open camera') || lower.includes('cap_dshow') || lower.includes('no frame')) {
+            return 'Camera unavailable. Please check that your webcam is plugged in and not in use by another app.';
+        }
+        if (lower.includes('timeout')) {
+            return 'Processing timed out. Try holding the document steady.';
+        }
+        return rawError;
     }
 
     /** HTML for a /api/test-ocr response. Pure (no DOM) so it is unit-tested under Node.
@@ -285,9 +421,10 @@ class Dashboard {
     async saveOCRConfig(e) {
         e.preventDefault();
         const btn = document.getElementById('saveOcr');
+        if (!btn) return;
         const originalText = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = '<span class="loading-spinner"></span> Saving...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Saving...';
 
         try {
             const payload = {
@@ -296,7 +433,7 @@ class Dashboard {
                     language: document.getElementById('ocrLang').value,
                     capture_interval: parseFloat(document.getElementById('captureInterval').value),
                     min_confidence: parseFloat(document.getElementById('minConfidence').value),
-                    min_text_len: parseInt(document.getElementById('minTextLen').value),
+                    min_text_len: parseInt(document.getElementById('minTextLen').value, 10),
                     mode: document.getElementById('ocrMode').value
                 }
             };
@@ -310,7 +447,7 @@ class Dashboard {
             const data = await response.json();
             if (data.status === 'saved') {
                 this.config.ocr = payload.ocr;
-                this.showAlert('success', 'OCR settings saved successfully! Pipeline will restart.');
+                this.showAlert('success', 'OCR settings saved successfully! Pipeline reloaded.');
             } else {
                 this.configError(data, 'OCR settings');
             }
@@ -325,9 +462,10 @@ class Dashboard {
     async saveTTSConfig(e) {
         e.preventDefault();
         const btn = document.getElementById('saveTts');
+        if (!btn) return;
         const originalText = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = '<span class="loading-spinner"></span> Saving...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Saving...';
 
         try {
             const payload = {
@@ -363,15 +501,16 @@ class Dashboard {
     async saveCameraConfig(e) {
         e.preventDefault();
         const btn = document.getElementById('saveCamera');
+        if (!btn) return;
         const originalText = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = '<span class="loading-spinner"></span> Saving...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Saving...';
 
         try {
             const payload = {
                 camera: {
                     source_type: document.getElementById('cameraSource').value,
-                    camera_id: parseInt(document.getElementById('cameraId').value),
+                    camera_id: parseInt(document.getElementById('cameraId').value, 10),
                     resolution: document.getElementById('resolution').value
                 }
             };
@@ -385,7 +524,7 @@ class Dashboard {
             const data = await response.json();
             if (data.status === 'saved') {
                 this.config.camera = payload.camera;
-                this.showAlert('success', 'Camera settings saved successfully! Pipeline will restart.');
+                this.showAlert('success', 'Camera settings saved! Reconnecting camera...');
             } else {
                 this.configError(data, 'camera settings');
             }
@@ -400,7 +539,6 @@ class Dashboard {
     async refreshCameraPreview() {
         const previewImg = document.getElementById('cameraPreview');
         if (!previewImg) return;
-        // Fetch new snapshot with timestamp cache-buster
         const newImg = new Image();
         newImg.onload = () => {
             previewImg.src = newImg.src;
@@ -418,48 +556,97 @@ class Dashboard {
             const data = await response.json();
             
             if (data.pipeline) {
-                this.isRunning = data.pipeline.running || false;
+                const pipe = data.pipeline;
+                this.isRunning = pipe.running || false;
                 this.updateStatusBadge(this.isRunning);
                 
-                // Update live camera preview if running or viewfinder exists
+                // Refresh viewfinder thumbnail while stream is active
                 if (this.isRunning) {
                     this.refreshCameraPreview();
                 }
 
-                // Update motion badge
+                // Camera status & motion
                 const motionBadge = document.getElementById('motionBadge');
-                if (motionBadge && data.pipeline.motion) {
-                    if (data.pipeline.motion.is_moving) {
-                        motionBadge.textContent = `Moving (${data.pipeline.motion.motion_score})`;
-                        motionBadge.className = 'badge bg-warning text-dark me-2';
+                const isMoving = pipe.motion ? pipe.motion.is_moving : false;
+                const camState = pipe.camera ? pipe.camera.state : 'stopped';
+
+                if (motionBadge) {
+                    if (!this.isRunning) {
+                        motionBadge.textContent = 'Camera: Paused';
+                        motionBadge.className = 'badge status-pill bg-secondary';
+                    } else if (camState === 'reconnecting') {
+                        motionBadge.textContent = 'Camera: Reconnecting...';
+                        motionBadge.className = 'badge status-pill bg-warning text-dark';
+                        if (this.lastCameraState !== 'reconnecting') {
+                            this.announce('Camera reconnecting.');
+                        }
+                    } else if (isMoving) {
+                        motionBadge.textContent = 'Camera: Moving (Hold steady)';
+                        motionBadge.className = 'badge status-pill bg-warning text-dark';
+                        if (this.lastMovingState !== true) {
+                            this.announce('Camera is moving. Hold steady.');
+                        }
                     } else {
-                        motionBadge.textContent = 'Still (Holding)';
-                        motionBadge.className = 'badge bg-success me-2';
+                        motionBadge.textContent = 'Camera: Steady';
+                        motionBadge.className = 'badge status-pill bg-success';
+                        if (this.lastMovingState === true) {
+                            this.announce('Camera steady.');
+                        }
                     }
                 }
+                this.lastMovingState = isMoving;
+                this.lastCameraState = camState;
 
-                // Update pipeline status overlay
+                // Speech status
+                const speechBadge = document.getElementById('speechBadge');
+                const isSpeaking = pipe.audio ? pipe.audio.speaking : false;
+                if (speechBadge) {
+                    if (isSpeaking) {
+                        speechBadge.textContent = 'Speech: Speaking';
+                        speechBadge.className = 'badge status-pill bg-primary';
+                    } else {
+                        speechBadge.textContent = 'Speech: Ready';
+                        speechBadge.className = 'badge status-pill bg-info text-dark';
+                    }
+                }
+                this.lastSpeakingState = isSpeaking;
+
+                // Viewfinder status overlay
                 const statusOverlay = document.getElementById('cameraStatusOverlay');
                 const pipelineDetails = document.getElementById('pipelineDetails');
-                const outcome = data.pipeline.last_outcome;
-                const statusMsg = outcome ? outcome.replace('_', ' ').toUpperCase() : (this.isRunning ? 'STREAMING' : 'READY');
-                if (statusOverlay) statusOverlay.textContent = `Status: ${statusMsg}`;
-                if (pipelineDetails) {
-                    pipelineDetails.textContent = `Pipeline: ${statusMsg} | Frames: ${data.pipeline.frames_processed || 0}`;
+                const outcome = pipe.last_outcome;
+                const friendlyStatus = outcome ? outcome.replace(/_/g, ' ') : (this.isRunning ? 'Active' : 'Idle');
+
+                if (statusOverlay) {
+                    statusOverlay.textContent = this.isRunning ? (isMoving ? 'Moving' : 'Reading') : 'Ready';
                 }
 
-                if (data.pipeline.last_text) {
-                    const output = document.getElementById('ocrOutput');
-                    if (output.textContent !== data.pipeline.last_text) {
-                        output.textContent = data.pipeline.last_text;
-                        output.classList.add('fade-in');
-                        setTimeout(() => output.classList.remove('fade-in'), 300);
+                if (pipelineDetails) {
+                    if (!this.isRunning) {
+                        pipelineDetails.textContent = 'Status: Paused. Press Space to resume.';
+                    } else if (isMoving) {
+                        pipelineDetails.textContent = 'Status: Camera moving... Hold steady over text.';
+                    } else if (pipe.last_text) {
+                        pipelineDetails.textContent = `Status: Reading recognized text (${pipe.frames_processed} frames evaluated).`;
+                    } else {
+                        pipelineDetails.textContent = 'Status: Camera steady. Searching for clear text.';
                     }
-                } else if (this.isRunning && outcome === 'camera_moving') {
-                    const output = document.getElementById('ocrOutput');
-                    if (output.textContent.includes('Waiting')) {
-                        output.textContent = 'Camera is moving... Hold steady to read text.';
+                }
+
+                // Update text display & announce when new text is accepted
+                const output = document.getElementById('ocrOutput');
+                if (pipe.last_text) {
+                    if (pipe.last_text !== this.lastTextSeen) {
+                        this.lastTextSeen = pipe.last_text;
+                        if (output) {
+                            output.textContent = pipe.last_text;
+                            output.classList.add('fade-in');
+                            setTimeout(() => output.classList.remove('fade-in'), 300);
+                        }
+                        this.announce(`Text detected: ${pipe.last_text}`);
                     }
+                } else if (this.isRunning && isMoving && output && output.textContent.includes('Waiting for text')) {
+                    output.textContent = 'Camera is moving... Hold steady to read text.';
                 }
             }
         } catch (error) {
@@ -476,27 +663,26 @@ class Dashboard {
             const count = document.getElementById('historyCount');
             
             if (data.history && data.history.length > 0) {
-                list.innerHTML = '';
-                count.textContent = data.history.length;
+                if (list) list.innerHTML = '';
+                if (count) count.textContent = String(data.history.length);
                 
-                data.history.forEach((h, index) => {
+                data.history.forEach((h) => {
                     const item = document.createElement('div');
-                    item.className = 'history-item fade-in';
-                    item.style.animationDelay = `${index * 0.05}s`;
+                    item.className = 'history-item';
                     
-                    const time = new Date(h.ts * 1000).toLocaleString();
+                    const time = new Date(h.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                     const engine = h.engine ? ` [${h.engine}]` : '';
-                    const confidence = h.confidence ? ` (${(h.confidence * 100).toFixed(0)}%)` : '';
+                    const conf = h.confidence ? ` ${(h.confidence * 100).toFixed(0)}%` : '';
                     
                     item.innerHTML = `
-                        <div class="history-item-time">${time}${engine}${confidence}</div>
+                        <div class="history-item-time">${time}${engine}${conf}</div>
                         <div class="history-item-text">${this.escapeHtml(h.text)}</div>
                     `;
-                    list.appendChild(item);
+                    if (list) list.appendChild(item);
                 });
             } else {
-                list.innerHTML = '<div class="text-muted text-center">No history yet</div>';
-                count.textContent = '0';
+                if (list) list.innerHTML = '<div class="text-muted text-center py-2">No history recorded yet</div>';
+                if (count) count.textContent = '0';
             }
         } catch (error) {
             console.error('Error updating history:', error);
@@ -505,20 +691,23 @@ class Dashboard {
 
     updateStatusBadge(isRunning) {
         const badge = document.getElementById('statusBadge');
-        if (isRunning) {
-            badge.textContent = 'Running';
-            badge.className = 'status-badge status-running';
-        } else {
-            badge.textContent = 'Stopped';
-            badge.className = 'status-badge status-stopped';
+        if (badge) {
+            if (isRunning) {
+                badge.textContent = 'Running';
+                badge.className = 'status-badge status-running';
+            } else {
+                badge.textContent = 'Paused';
+                badge.className = 'status-badge status-stopped';
+            }
         }
     }
 
     showAlert(type, message, isHtml = false) {
         const container = document.getElementById('alertContainer');
+        if (!container) return;
         const alert = document.createElement('div');
-        alert.className = `alert alert-${type} fade-in`;
-        alert.setAttribute('role', 'alert');
+        alert.className = `alert alert-${type} fade show`;
+        alert.setAttribute('role', 'status');
         
         if (isHtml) {
             alert.innerHTML = message;
@@ -529,34 +718,23 @@ class Dashboard {
         container.innerHTML = '';
         container.appendChild(alert);
         
-        // Auto-remove after 5 seconds for success/info, 10 for errors
         const timeout = (type === 'danger' || type === 'warning') ? 10000 : 5000;
         setTimeout(() => {
-            alert.classList.remove('fade-in');
             alert.style.opacity = '0';
             setTimeout(() => alert.remove(), 300);
         }, timeout);
     }
 
     startPolling() {
-        // Update status every second
         this.statusInterval = setInterval(() => this.updateStatus(), 1000);
-        
-        // Update history every 3 seconds
         this.historyInterval = setInterval(() => this.updateHistory(), 3000);
-        
-        // Initial updates
         this.updateStatus();
         this.updateHistory();
     }
 
     stopPolling() {
-        if (this.statusInterval) {
-            clearInterval(this.statusInterval);
-        }
-        if (this.historyInterval) {
-            clearInterval(this.historyInterval);
-        }
+        if (this.statusInterval) clearInterval(this.statusInterval);
+        if (this.historyInterval) clearInterval(this.historyInterval);
     }
 
     escapeHtml(text) {
@@ -566,8 +744,7 @@ class Dashboard {
     }
 }
 
-// Export for use in HTML
+// Export for Node unit tests
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = Dashboard;
 }
-

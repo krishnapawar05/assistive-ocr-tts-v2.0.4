@@ -1,245 +1,309 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="container-fluid">
-  <!-- Main Dashboard Section -->
-  <div class="row">
-    <div class="col-lg-8">
-      <!-- Camera Viewfinder Card -->
-      <div class="card mb-4" id="viewfinderCard" tabindex="0" aria-label="Camera Viewfinder">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span>📷 Camera Viewfinder & Framing</span>
-          <div>
-            <span id="motionBadge" class="badge bg-secondary me-2">Motion: Still</span>
-            <span id="fpsBadge" class="badge bg-dark">Stream Live</span>
-          </div>
-        </div>
-        <div class="card-body p-2 text-center" style="background: #111; border-radius: 0 0 var(--border-radius) var(--border-radius);">
-          <div style="position: relative; display: inline-block; max-width: 100%; border-radius: 8px; overflow: hidden;">
-            <img id="cameraPreview" src="/api/camera/snapshot" alt="Live Camera Preview" style="width: 100%; max-height: 420px; object-fit: contain; display: block;" onerror="this.style.opacity='0.4';" />
-            <div id="targetOverlay" style="position: absolute; top: 15%; left: 15%; right: 15%; bottom: 15%; border: 2px dashed rgba(13, 202, 240, 0.7); border-radius: 8px; pointer-events: none; display: flex; align-items: center; justify-content: center;">
-              <span style="background: rgba(0,0,0,0.6); color: #fff; font-size: 0.85rem; padding: 2px 8px; border-radius: 4px;">Align text within this box</span>
-            </div>
-            <div id="cameraStatusOverlay" style="position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.7); color: #fff; font-size: 0.8rem; padding: 3px 8px; border-radius: 4px;">
-              Ready
-            </div>
-          </div>
-        </div>
-      </div>
+<!-- Screen Reader Live Announcement Channel (Polite, Non-Spamming) -->
+<div id="srLiveAnnouncements" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
 
-      <!-- Live OCR Output Card -->
-      <div class="card mb-4" id="dashboard" tabindex="0" aria-label="Dashboard">
-        <div class="card-header">
-          <span>📹 Live OCR Output</span>
-          <span id="statusBadge" class="status-badge status-stopped">Stopped</span>
-        </div>
-        <div class="card-body">
-          <div id="ocrOutput" class="ocr-box" role="region" aria-live="polite" aria-atomic="true">
-            Waiting for OCR output...
-          </div>
-          <div class="d-flex justify-content-between align-items-center mt-2 px-1">
-            <small id="pipelineDetails" class="text-muted">Status: Idle</small>
-            <small id="confidenceDetails" class="text-muted">Confidence: -</small>
-          </div>
-          <div class="control-buttons mt-3">
-            <button class="btn btn-success" id="startBtn">
-              <span>▶️ Start</span>
-            </button>
-            <button class="btn btn-danger" id="stopBtn">
-              <span>⏹️ Stop</span>
-            </button>
-            <button class="btn btn-primary" id="replayBtn">
-              <span>🔊 Replay Audio</span>
-            </button>
-            <button class="btn btn-info" id="testCameraBtn">
-              <span>📷 Test Camera</span>
-            </button>
-            <button class="btn btn-warning" id="testOcrBtn">
-              <span>🔍 Test OCR</span>
-            </button>
-          </div>
-          <div id="alertContainer" class="mt-3"></div>
-        </div>
+<!-- ========================================================================= -->
+<!-- 1. PRIMARY ASSISTIVE USER INTERFACE (Designed for Visually Impaired)      -->
+<!-- ========================================================================= -->
+<section id="studentWorkspace" aria-label="Assistive Reading Workspace">
+  <!-- System Status Strip -->
+  <div class="card status-strip-card mb-3" tabindex="0" aria-label="System status summary">
+    <div class="card-body p-3 d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <div class="status-item d-flex align-items-center">
+        <span class="status-label me-2">System:</span>
+        <span id="statusBadge" class="status-badge status-stopped" role="status">Stopped</span>
       </div>
-
-      <!-- Text History Card -->
-      <div class="card mb-4" id="history" tabindex="0" aria-label="Text history">
-        <div class="card-header">
-          <span>📜 Text History</span>
-          <span id="historyCount" class="badge bg-secondary">0</span>
-        </div>
-        <div class="card-body">
-          <div id="historyList" style="max-height: 400px; overflow-y: auto;">
-            <div class="text-muted text-center">No history yet</div>
-          </div>
-        </div>
+      <div class="status-item d-flex align-items-center">
+        <span class="status-label me-2">Camera:</span>
+        <span id="motionBadge" class="badge status-pill bg-secondary" role="status">Waiting for camera</span>
       </div>
-    </div>
-
-    <!-- Settings Sidebar -->
-    <div class="col-lg-4">
-      <!-- OCR Settings Card -->
-      <div class="card mb-4" id="ocr" tabindex="0">
-        <div class="card-header">
-          <span>🔍 OCR Settings</span>
-        </div>
-        <div class="card-body">
-          <form id="ocrForm">
-            <div class="mb-3">
-              <label for="ocrEngine" class="form-label">OCR Engine</label>
-              <select id="ocrEngine" name="ocr_engine" class="form-select" aria-label="OCR engine select">
-                {# Rendered server-side from the saved config, so the form is truthful even before (or without) dashboard.js #}
-                {% for value, label in [('easyocr', 'EasyOCR'), ('paddle', 'PaddleOCR'), ('tesseract', 'Tesseract'), ('trocr', 'TrOCR (handwriting)')] %}
-                <option value="{{ value }}"{% if config['ocr']['engine'] == value %} selected{% endif %}>{{ label }}{% if value in unusable_ocr %} ({{ unusable_ocr[value] }}){% endif %}</option>
-                {% endfor %}
-              </select>
-              <small class="form-text text-muted">Primary engine; unavailable engines are skipped automatically</small>
-            </div>
-            <div class="mb-3">
-              <label for="ocrMode" class="form-label">Engine Mode</label>
-              <select id="ocrMode" name="mode" class="form-select">
-                {% for value, label in [('single_engine', 'Single engine (fastest)'), ('fallback', 'Fallback (next engine only if unsure)'), ('ensemble', 'Ensemble (all engines, slowest)')] %}
-                <option value="{{ value }}"{% if config['ocr']['mode'] == value %} selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="mb-3">
-              <label for="ocrLang" class="form-label">Language</label>
-              <select id="ocrLang" name="language" class="form-select">
-                {% for value, label in [('en', 'English'), ('hi', 'Hindi'), ('kn', 'Kannada')] %}
-                <option value="{{ value }}"{% if config['ocr']['language'] == value %} selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="mb-3">
-              <label for="captureInterval" class="form-label">
-                Capture Interval (seconds)
-                <span class="range-value" id="captureIntervalValue">{{ config['ocr']['capture_interval'] }}</span>
-              </label>
-              <input id="captureInterval" name="capture_interval" type="range" 
-                     class="form-range" min="0.1" max="5" step="0.1" 
-                     value="{{ config['ocr']['capture_interval'] }}">
-              <small class="form-text text-muted">Lower values = faster detection</small>
-            </div>
-            <div class="mb-3">
-              <label for="minConfidence" class="form-label">
-                Min Confidence
-                <span class="range-value" id="minConfidenceValue">{{ config['ocr'].get('min_confidence', 0.5) }}</span>
-              </label>
-              <input id="minConfidence" name="min_confidence" type="range" 
-                     class="form-range" min="0.1" max="1.0" step="0.05" 
-                     value="{{ config['ocr'].get('min_confidence', 0.5) }}">
-            </div>
-            <div class="mb-3">
-              <label for="minTextLen" class="form-label">
-                Min Text Length
-                <span class="range-value" id="minTextLenValue">{{ config['ocr'].get('min_text_len', 3) }}</span>
-              </label>
-              <input id="minTextLen" name="min_text_len" type="range" 
-                     class="form-range" min="1" max="20" step="1" 
-                     value="{{ config['ocr'].get('min_text_len', 3) }}">
-            </div>
-            <button type="submit" class="btn btn-primary w-100" id="saveOcr">
-              💾 Save OCR Settings
-            </button>
-          </form>
-        </div>
+      <div class="status-item d-flex align-items-center">
+        <span class="status-label me-2">Speech:</span>
+        <span id="speechBadge" class="badge status-pill bg-info text-dark" role="status">Ready</span>
       </div>
-
-      <!-- TTS Settings Card -->
-      <div class="card mb-4" id="tts" tabindex="0">
-        <div class="card-header">
-          <span>🔊 TTS Settings</span>
-        </div>
-        <div class="card-body">
-          <form id="ttsForm">
-            <div class="mb-3">
-              <label for="ttsEngine" class="form-label">TTS Engine</label>
-              <select id="ttsEngine" name="tts_engine" class="form-select">
-                <option value="coqui">Coqui TTS</option>
-                <option value="windows">Windows Speech</option>
-                <option value="espeak">espeak-ng</option>
-              </select>
-            </div>
-            <div class="mb-3">
-              <label for="ttsVoice" class="form-label">Voice (Coqui)</label>
-              <select id="ttsVoice" name="voice" class="form-select">
-                <option value="p335">Default (p335)</option>
-                {% for voice in voices %}
-                <option value="{{ voice }}">{{ voice }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="mb-3">
-              <label for="ttsSpeed" class="form-label">
-                Speed
-                <span class="range-value" id="ttsSpeedValue">{{ config['tts']['speed'] }}</span>
-              </label>
-              <input id="ttsSpeed" name="speed" type="range" 
-                     class="form-range" min="0.5" max="1.6" step="0.1" 
-                     value="{{ config['tts']['speed'] }}">
-            </div>
-            <div class="mb-3">
-              <label for="ttsVolume" class="form-label">
-                Volume
-                <span class="range-value" id="ttsVolumeValue">{{ config['tts']['volume'] }}</span>
-              </label>
-              <input id="ttsVolume" name="volume" type="range" 
-                     class="form-range" min="0.1" max="1.0" step="0.1" 
-                     value="{{ config['tts']['volume'] }}">
-            </div>
-            <button type="submit" class="btn btn-primary w-100" id="saveTts">
-              💾 Save TTS Settings
-            </button>
-          </form>
-        </div>
-      </div>
-
-      <!-- Camera Settings Card -->
-      <div class="card mb-4" id="camera" tabindex="0">
-        <div class="card-header">
-          <span>📷 Camera Settings</span>
-        </div>
-        <div class="card-body">
-          <form id="cameraForm">
-            <div class="mb-3">
-              <label for="cameraSource" class="form-label">Camera Source</label>
-              <select id="cameraSource" name="source_type" class="form-select">
-                <option value="opencv">OpenCV</option>
-                <option value="gstreamer">GStreamer (nvarguscamerasrc)</option>
-              </select>
-            </div>
-            <div class="mb-3">
-              <label for="cameraId" class="form-label">Camera ID</label>
-              <input id="cameraId" name="camera_id" type="number" 
-                     class="form-control" min="0" 
-                     value="{{ config['camera']['camera_id'] }}">
-              <small class="form-text text-muted">Usually 0 for default camera</small>
-            </div>
-            <div class="mb-3">
-              <label for="resolution" class="form-label">Resolution</label>
-              <select id="resolution" name="resolution" class="form-select">
-                <option value="720p">720p (1280x720)</option>
-                <option value="1080p">1080p (1920x1080)</option>
-              </select>
-            </div>
-            <button type="submit" class="btn btn-primary w-100" id="saveCamera">
-              💾 Save Camera Settings
-            </button>
-          </form>
-        </div>
+      <div class="status-item d-flex align-items-center d-none d-sm-flex">
+        <span id="fpsBadge" class="badge bg-dark text-muted">Offline-First</span>
       </div>
     </div>
   </div>
-</div>
+
+  <!-- Primary Interactive Controls -->
+  <section class="card mb-3 primary-controls-card" aria-label="Primary audio and system controls">
+    <div class="card-body p-3">
+      <div class="primary-controls-grid">
+        <button class="btn btn-success btn-action" id="startBtn" aria-label="Start reading system. Shortcut: Space bar.">
+          <span class="btn-icon" aria-hidden="true">▶️</span>
+          <span class="btn-text">Start System</span>
+          <kbd class="shortcut-tag">Space</kbd>
+        </button>
+        <button class="btn btn-secondary btn-action" id="stopBtn" aria-label="Pause system capture. Shortcut: Space bar when running.">
+          <span class="btn-icon" aria-hidden="true">⏸️</span>
+          <span class="btn-text">Pause</span>
+        </button>
+        <button class="btn btn-primary btn-action" id="replayBtn" aria-label="Replay latest recognized text. Shortcut: Key R.">
+          <span class="btn-icon" aria-hidden="true">🔊</span>
+          <span class="btn-text">Replay Text</span>
+          <kbd class="shortcut-tag">R</kbd>
+        </button>
+        <button class="btn btn-danger btn-action" id="stopSpeechBtn" aria-label="Silence current speech and clear speech queue. Shortcut: Escape key.">
+          <span class="btn-icon" aria-hidden="true">⏹️</span>
+          <span class="btn-text">Stop Speech</span>
+          <kbd class="shortcut-tag">Esc</kbd>
+        </button>
+      </div>
+      <div id="alertContainer" class="mt-3" role="region" aria-live="assertive"></div>
+    </div>
+  </section>
+
+  <!-- Main Content Grid: Recognized Text (Prominent) + Viewfinder Guidance -->
+  <div class="row g-3 mb-4">
+    <!-- Recognized Text Display (Primary Focus) -->
+    <div class="col-lg-7">
+      <section class="card text-display-card h-100" id="dashboard" tabindex="0" aria-label="Detected Text Reader">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h2 class="h5 m-0 font-weight-bold">📖 Detected Text</h2>
+          <small id="confidenceDetails" class="text-muted">High Confidence Text</small>
+        </div>
+        <div class="card-body d-flex flex-column justify-content-between p-3">
+          <div id="ocrOutput" class="ocr-box" role="region" aria-label="Spoken OCR output" aria-live="polite">
+            Waiting for text... Press "Start System" or Space to begin.
+          </div>
+          <div class="d-flex justify-content-between align-items-center mt-3 pt-2 border-top">
+            <span id="pipelineDetails" class="text-muted small">Status: Idle. Point camera at document and hold steady.</span>
+            <span id="shortcutHint" class="text-muted small d-none d-md-inline">Press <kbd>R</kbd> to replay anytime</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Camera Viewfinder & Framing Alignment (For Teachers, Assistants, & Low-Vision Users) -->
+    <div class="col-lg-5">
+      <section class="card viewfinder-card h-100" id="viewfinderCard" tabindex="0" aria-label="Camera Viewfinder and Document Alignment">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h2 class="h5 m-0">📷 Camera Alignment</h2>
+          <span id="cameraStatusOverlay" class="badge bg-dark">Ready</span>
+        </div>
+        <div class="card-body p-2 text-center camera-viewport-body">
+          <div class="camera-frame-wrapper">
+            <img id="cameraPreview" src="/api/camera/snapshot" alt="Live Camera Preview showing document alignment" class="camera-img" onerror="this.style.opacity='0.4';" />
+            <div id="targetOverlay" class="viewfinder-overlay" aria-hidden="true">
+              <span class="overlay-text">Align text within this box</span>
+            </div>
+          </div>
+          <p class="small text-muted mt-2 mb-0 px-2" id="alignmentGuidanceText">
+            Tip: Hold pages flat, 20–30 cm from camera. The system reads automatically when held steady.
+          </p>
+        </div>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================================= -->
+<!-- 2. DIAGNOSTICS & TEACHER SETTINGS (Collapsible Secondary Drawer)           -->
+<!-- ========================================================================= -->
+<section id="diagnosticsSection" class="mb-4" aria-label="Diagnostics and configuration drawer">
+  <details class="diagnostics-details">
+    <summary class="diagnostics-summary" aria-label="Toggle diagnostics and advanced settings panel">
+      <span>⚙️ Diagnostics, Engine Controls &amp; Settings (Assistants &amp; Developers)</span>
+      <span class="toggle-indicator" aria-hidden="true">▾</span>
+    </summary>
+
+    <div class="diagnostics-content p-3 mt-2 border rounded bg-light">
+      <!-- Quick Diagnostic Test Buttons -->
+      <div class="diagnostic-actions d-flex flex-wrap gap-2 mb-4 p-2 bg-white rounded border">
+        <button class="btn btn-outline-info" id="testCameraBtn" aria-label="Run camera connection hardware test">
+          <span>📷 Test Camera Hardware</span>
+        </button>
+        <button class="btn btn-outline-warning" id="testOcrBtn" aria-label="Run detailed single frame OCR diagnostic">
+          <span>🔍 Run OCR Frame Diagnostics</span>
+        </button>
+      </div>
+
+      <div class="row g-3">
+        <!-- Text History Log -->
+        <div class="col-12 mb-3">
+          <div class="card" id="history" tabindex="0" aria-label="Recent text history log">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span>📜 Recent Speech &amp; Text History</span>
+              <span id="historyCount" class="badge bg-secondary">0</span>
+            </div>
+            <div class="card-body p-2">
+              <div id="historyList" class="history-container">
+                <div class="text-muted text-center py-2">No history recorded yet</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- OCR Configuration Card -->
+        <div class="col-md-4">
+          <div class="card h-100" id="ocr" tabindex="0" aria-label="OCR Engine Configuration">
+            <div class="card-header">
+              <span>🔍 OCR Engine Configuration</span>
+            </div>
+            <div class="card-body">
+              <form id="ocrForm">
+                <div class="mb-3">
+                  <label for="ocrEngine" class="form-label">OCR Engine</label>
+                  <select id="ocrEngine" name="ocr_engine" class="form-select" aria-label="OCR engine select">
+                    {% for value, label in [('easyocr', 'EasyOCR'), ('paddle', 'PaddleOCR'), ('tesseract', 'Tesseract'), ('trocr', 'TrOCR (handwriting)')] %}
+                    <option value="{{ value }}"{% if config['ocr']['engine'] == value %} selected{% endif %}>{{ label }}{% if value in unusable_ocr %} ({{ unusable_ocr[value] }}){% endif %}</option>
+                    {% endfor %}
+                  </select>
+                  <small class="form-text text-muted">Primary engine; offline fallbacks run automatically.</small>
+                </div>
+                <div class="mb-3">
+                  <label for="ocrMode" class="form-label">Engine Mode</label>
+                  <select id="ocrMode" name="mode" class="form-select">
+                    {% for value, label in [('single_engine', 'Single engine (fastest)'), ('fallback', 'Fallback (next engine only if unsure)'), ('ensemble', 'Ensemble (all engines, slowest)')] %}
+                    <option value="{{ value }}"{% if config['ocr']['mode'] == value %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label for="ocrLang" class="form-label">Language</label>
+                  <select id="ocrLang" name="language" class="form-select">
+                    {% for value, label in [('en', 'English'), ('hi', 'Hindi'), ('kn', 'Kannada')] %}
+                    <option value="{{ value }}"{% if config['ocr']['language'] == value %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label for="captureInterval" class="form-label">
+                    Capture Interval (s):
+                    <span class="range-value" id="captureIntervalValue">{{ config['ocr']['capture_interval'] }}</span>
+                  </label>
+                  <input id="captureInterval" name="capture_interval" type="range" 
+                         class="form-range" min="0.1" max="5" step="0.1" 
+                         value="{{ config['ocr']['capture_interval'] }}">
+                </div>
+                <div class="mb-3">
+                  <label for="minConfidence" class="form-label">
+                    Min Confidence:
+                    <span class="range-value" id="minConfidenceValue">{{ config['ocr'].get('min_confidence', 0.5) }}</span>
+                  </label>
+                  <input id="minConfidence" name="min_confidence" type="range" 
+                         class="form-range" min="0.1" max="1.0" step="0.05" 
+                         value="{{ config['ocr'].get('min_confidence', 0.5) }}">
+                </div>
+                <div class="mb-3">
+                  <label for="minTextLen" class="form-label">
+                    Min Text Length:
+                    <span class="range-value" id="minTextLenValue">{{ config['ocr'].get('min_text_len', 3) }}</span>
+                  </label>
+                  <input id="minTextLen" name="min_text_len" type="range" 
+                         class="form-range" min="1" max="20" step="1" 
+                         value="{{ config['ocr'].get('min_text_len', 3) }}">
+                </div>
+                <button type="submit" class="btn btn-primary w-100" id="saveOcr">
+                  💾 Save OCR Settings
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- TTS Configuration Card -->
+        <div class="col-md-4">
+          <div class="card h-100" id="tts" tabindex="0" aria-label="Speech Output Configuration">
+            <div class="card-header">
+              <span>🔊 Speech (TTS) Settings</span>
+            </div>
+            <div class="card-body">
+              <form id="ttsForm">
+                <div class="mb-3">
+                  <label for="ttsEngine" class="form-label">TTS Engine</label>
+                  <select id="ttsEngine" name="tts_engine" class="form-select">
+                    <option value="coqui">Coqui TTS (Offline Neural)</option>
+                    <option value="windows">Windows Speech (Native SAPI)</option>
+                    <option value="espeak">eSpeak-ng (Lightweight)</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label for="ttsVoice" class="form-label">Voice (Coqui)</label>
+                  <select id="ttsVoice" name="voice" class="form-select">
+                    <option value="p335">Default (p335)</option>
+                    {% for voice in voices %}
+                    <option value="{{ voice }}">{{ voice }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label for="ttsSpeed" class="form-label">
+                    Speech Speed:
+                    <span class="range-value" id="ttsSpeedValue">{{ config['tts']['speed'] }}</span>
+                  </label>
+                  <input id="ttsSpeed" name="speed" type="range" 
+                         class="form-range" min="0.5" max="1.6" step="0.1" 
+                         value="{{ config['tts']['speed'] }}">
+                </div>
+                <div class="mb-3">
+                  <label for="ttsVolume" class="form-label">
+                    Speech Volume:
+                    <span class="range-value" id="ttsVolumeValue">{{ config['tts']['volume'] }}</span>
+                  </label>
+                  <input id="ttsVolume" name="volume" type="range" 
+                         class="form-range" min="0.1" max="1.0" step="0.1" 
+                         value="{{ config['tts']['volume'] }}">
+                </div>
+                <button type="submit" class="btn btn-primary w-100" id="saveTts">
+                  💾 Save TTS Settings
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Camera Hardware Configuration Card -->
+        <div class="col-md-4">
+          <div class="card h-100" id="camera" tabindex="0" aria-label="Camera Hardware Configuration">
+            <div class="card-header">
+              <span>📷 Camera Settings</span>
+            </div>
+            <div class="card-body">
+              <form id="cameraForm">
+                <div class="mb-3">
+                  <label for="cameraSource" class="form-label">Camera Source</label>
+                  <select id="cameraSource" name="source_type" class="form-select">
+                    <option value="opencv">OpenCV (USB/Webcam)</option>
+                    <option value="gstreamer">GStreamer (CSI Camera)</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label for="cameraId" class="form-label">Camera ID</label>
+                  <input id="cameraId" name="camera_id" type="number" 
+                         class="form-control" min="0" 
+                         value="{{ config['camera']['camera_id'] }}">
+                  <small class="form-text text-muted">0 = Default primary camera</small>
+                </div>
+                <div class="mb-3">
+                  <label for="resolution" class="form-label">Resolution</label>
+                  <select id="resolution" name="resolution" class="form-select">
+                    <option value="720p">720p (1280x720 - Recommended)</option>
+                    <option value="1080p">1080p (1920x1080)</option>
+                  </select>
+                </div>
+                <button type="submit" class="btn btn-primary w-100" id="saveCamera">
+                  💾 Save Camera Settings
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </details>
+</section>
 
 <script>
-  // Initialize dashboard with config
+  // Initialize dashboard data from server
   const CONFIG = {{ config | tojson }};
   const VOICES = {{ voices | tojson }};
 </script>
 <script src="/static/dashboard.js?v={{ assets['dashboard.js'] }}"></script>
 <script>
-  // Initialize dashboard after script loads
   document.addEventListener('DOMContentLoaded', function() {
     if (typeof Dashboard !== 'undefined') {
       const dashboard = new Dashboard(CONFIG, VOICES);

@@ -46,6 +46,30 @@ Decisions: [`docs/adr/`](docs/adr/). Every engine sits behind an adapter and rep
 `INIT_FAILED`, together with a reason. A missing engine never crashes the app; the next
 configured engine is used.
 
+## User Interface & Accessibility
+
+Smart Vision Assist v2.0.4 is designed specifically for **visually impaired and low-vision students**, while retaining diagnostics and configuration for teachers and assistants.
+
+### Primary Student Flow
+1. **Start System:** Click "Start System" or press <kbd>Space</kbd>.
+2. **Camera Alignment:** Hold documents or signs steadily in front of the camera (20–30 cm distance).
+3. **Auditory Output:** When clear text is acquired, OCR recognizes and speaks it through TTS automatically.
+4. **Speech Control:**
+   - **Pause/Resume:** Press <kbd>Space</kbd> or click "Pause".
+   - **Replay:** Press <kbd>R</kbd> or click "Replay Text" to re-read the most recent recognized text.
+   - **Stop Speech:** Press <kbd>Esc</kbd> or click "Stop Speech" to silence speech immediately and clear pending audio.
+
+### Accessibility Highlights
+- **Keyboard Shortcuts:** Global shortcuts (<kbd>Space</kbd>, <kbd>R</kbd>, <kbd>Esc</kbd>) guarded against input typing fields.
+- **Screen Reader Friendly:** Dedicated polite ARIA live region (`#srLiveAnnouncements`, `aria-live="polite"`) announces only meaningful state transitions (e.g. "Camera ready", "Camera moving. Hold steady", "Text detected: ...", "Speech stopped") without periodic frame spam.
+- **Visual Accessibility:**
+  - High Contrast mode toggle (<kbd>High Contrast</kbd>) exceeding WCAG 2.1 AA contrast requirements.
+  - Large Font mode toggle (<kbd>Large Font</kbd>) scaling typography up to 2.1rem.
+  - Prominent focus rings (`:focus-visible`) for all interactive controls.
+  - Reduced-motion support (`@media (prefers-reduced-motion: reduce)`).
+  - Accessibility skip link ("Skip to main content") at the top of every page.
+- **Secondary Diagnostics Drawer:** Technical configuration forms, raw sliders, hardware test buttons (`Test Camera`, `Test OCR`), and text history are housed in a collapsible drawer (`<details id="diagnosticsSection">`), preventing visual and cognitive clutter for students.
+
 ## Engine setup
 
 Verified versions are in [`docs/baseline/dependency-matrix.md`](docs/baseline/dependency-matrix.md).

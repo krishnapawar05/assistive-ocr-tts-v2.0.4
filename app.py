@@ -170,6 +170,24 @@ async def api_replay():
                         status_code=404)
 
 
+@app.post("/api/stop-speech")
+async def api_stop_speech():
+    """Immediately silence active speech and clear the pending audio queue."""
+    current().stop_speech()
+    return JSONResponse({"status": "stopped", "message": "Speech stopped and queue cleared"})
+
+
+@app.post("/api/replay-latest")
+async def api_replay_latest():
+    """Re-speak the most recent recognized text through TTS."""
+    p = current()
+    text = p.last_text
+    if not text:
+        return JSONResponse({"status": "no_text", "message": "No recognized text to replay yet"}, status_code=404)
+    result = p.speak(text)
+    return JSONResponse({"status": "replaying", "text": text, "audio": result})
+
+
 _camera_lock = threading.Lock()
 
 

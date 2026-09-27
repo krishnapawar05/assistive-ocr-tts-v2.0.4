@@ -296,6 +296,9 @@ class AssistivePipeline:
         utterance = self.composer.compose(text)
         return self.audio.submit(utterance, source="api") if utterance else "nothing_to_say"
 
+    def stop_speech(self) -> None:
+        self.audio.clear()
+
     def voices(self) -> List[str]:
         return self.tts.voices()
 
