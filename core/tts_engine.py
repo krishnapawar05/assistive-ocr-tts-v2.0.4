@@ -1,11 +1,20 @@
 # core/tts_engine.py
 import logging
-import sounddevice as sd
-import soundfile as sf
-import numpy as np
 import os
 import subprocess
 from typing import Optional
+
+import numpy as np
+import soundfile as sf
+
+# sounddevice requires PortAudio; guard import so the module doesn't crash on
+# headless servers (Railway, CI) that have no audio device.
+try:
+    import sounddevice as sd
+    _SD_AVAILABLE = True
+except Exception:
+    sd = None  # type: ignore
+    _SD_AVAILABLE = False
 
 logger = logging.getLogger("tts_engine")
 
@@ -35,21 +44,24 @@ class TTSEngine:
                 self.coqui = None
 
     def _play_numpy_audio(self, audio: np.ndarray, sr: int):
-        try:
-            sd.play(audio, samplerate=sr)
-            sd.wait()
-        except Exception as e:
-            logger.debug("sounddevice playback failed: %s", e)
-            tmp = "last_audio.wav"
-            sf.write(tmp, audio, sr)
-            self.last_audio_path = tmp
+        if _SD_AVAILABLE and sd is not None:
             try:
-                if os.name == "nt":
-                    os.startfile(tmp)
-                else:
-                    subprocess.Popen(["xdg-open", tmp])
-            except Exception:
-                pass
+                sd.play(audio, samplerate=sr)
+                sd.wait()
+                return
+            except Exception as e:
+                logger.debug("sounddevice playback failed: %s", e)
+        # Fallback: write to WAV and open externally
+        tmp = "last_audio.wav"
+        sf.write(tmp, audio, sr)
+        self.last_audio_path = tmp
+        try:
+            if os.name == "nt":
+                os.startfile(tmp)
+            else:
+                subprocess.Popen(["xdg-open", tmp])
+        except Exception:
+            pass
 
     def speak(self, text: str, voice: Optional[str] = "p335", speed: float = 1.0, volume: float = 0.9):
         if not text:

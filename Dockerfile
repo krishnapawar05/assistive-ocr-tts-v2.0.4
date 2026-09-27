@@ -6,14 +6,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PORT=8000
 
-# Install system dependencies for OpenCV, audio, TTS, and OCR
+# Install system dependencies for OpenCV, TTS, and OCR
+# NOTE: No audio device exists on Railway; eSpeak runs via subprocess (no PortAudio needed)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
     libgl1 \
     libglib2.0-0 \
     libgomp1 \
-    libasound2-dev \
-    portaudio19-dev \
     libsndfile1 \
     ffmpeg \
     espeak-ng \
@@ -24,10 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies
-COPY requirements.txt .
+# Install lightweight Python dependencies (no PyTorch/PaddlePaddle/EasyOCR/Coqui)
+COPY requirements-railway.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements-railway.txt
 
 # Copy application source code
 COPY . .
@@ -35,9 +33,9 @@ COPY . .
 # Expose web port
 EXPOSE 8000
 
-# Healthcheck targeting the API status endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8000}/api/status || exit 1
+# Healthcheck — /health always returns 200 immediately, even before models load
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
 # Start the application
 CMD ["python", "app.py"]
