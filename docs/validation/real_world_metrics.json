@@ -1,0 +1,115 @@
+{
+  "webcam": {
+    "connected": true,
+    "resolution": [
+      720,
+      1280,
+      3
+    ],
+    "quality_usable": false,
+    "motion_static_moving": false,
+    "motion_dynamic_moving": false,
+    "ocr_status": "unusable_frame",
+    "text": ""
+  },
+  "printed": [
+    {
+      "fixture": "signs/room_204.png",
+      "expected": "Room 204",
+      "actual": "Room 204",
+      "engine": "easyocr",
+      "confidence": 0.956,
+      "score": 0.947,
+      "latency_s": 5.163,
+      "status": "spoken"
+    },
+    {
+      "fixture": "printed/sentence.png",
+      "expected": "The quick brown fox jumps over the lazy dog",
+      "actual": "The quick brown fox jumps over the lazy dog",
+      "engine": "easyocr",
+      "confidence": 0.964,
+      "score": 0.917,
+      "latency_s": 19.685,
+      "status": "spoken"
+    },
+    {
+      "fixture": "printed/chapter_numbers.png",
+      "expected": "Chapter 7 Page 132",
+      "actual": "Chapter 7 Page 132",
+      "engine": "easyocr",
+      "confidence": 0.782,
+      "score": 0.875,
+      "latency_s": 5.998,
+      "status": "spoken"
+    },
+    {
+      "fixture": "classroom/whiteboard.png",
+      "expected": "Homework due Friday Read pages 40 to 45",
+      "actual": "Homework due Friday Read pages 40 to 45",
+      "engine": "easyocr",
+      "confidence": 0.85,
+      "score": 0.903,
+      "latency_s": 10.933,
+      "status": "spoken"
+    },
+    {
+      "fixture": "classroom/greenboard.png",
+      "expected": "Photosynthesis Light energy to chemical energy",
+      "actual": "Photosynthesis Light energy to chemical energy",
+      "engine": "easyocr",
+      "confidence": 0.972,
+      "score": 0.903,
+      "latency_s": 4.716,
+      "status": "spoken"
+    }
+  ],
+  "handwriting": [
+    {
+      "fixture": "handwritten/hand_meet.png",
+      "expected": "Meet me at noon",
+      "actual": "Meet me at noon",
+      "engine": "paddle",
+      "confidence": 0.994,
+      "score": 0.974,
+      "latency_s": 120.557,
+      "status": "stale_frame"
+    },
+    {
+      "fixture": "handwritten/hand_notes.png",
+      "expected": "Revise chapter three",
+      "actual": "Revise chapter three",
+      "engine": "easyocr",
+      "confidence": 0.974,
+      "score": 0.954,
+      "latency_s": 5.983,
+      "status": "spoken"
+    }
+  ],
+  "temporal_and_audio": {
+    "duplicate_suppressed": false,
+    "stop_speech_cleared_queue": true,
+    "scene_invalidation_purged": true
+  },
+  "tts": {
+    "windows": {
+      "status": "PASS",
+      "latency_s": 6.127,
+      "output_wav_bytes": 0
+    },
+    "espeak": {
+      "status": "PASS",
+      "latency_s": 3.029,
+      "output_wav_bytes": 0
+    },
+    "coqui": {
+      "status": "UNINITIALIZED"
+    }
+  },
+  "memory": {
+    "rss_initial_mb": 36.2,
+    "rss_pipeline_init_mb": 325.8,
+    "rss_peak_mb": 1129.2,
+    "delta_mb": 1093.0
+  }
+}

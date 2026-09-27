@@ -195,18 +195,22 @@ def _grab_frame(p: Optional[AssistivePipeline] = None):
     """Read one frame for diagnostics or preview.
     If the pipeline is running, borrow the most recent captured frame without disrupting the stream."""
     pipeline_inst = p if p is not None else current()
-    if pipeline_inst.running and pipeline_inst.controller is not None:
-        # Wait up to 2.5 seconds for the streaming controller to yield its first frame if connecting
-        for _ in range(5):
-            captured = pipeline_inst.controller.get_current_frame()
-            if captured is not None and getattr(captured, "image", None) is not None:
-                return captured.image.copy()
-            time.sleep(0.5)
-        state = pipeline_inst.controller.state
-        err = pipeline_inst.controller.last_error
-        raise CameraError(f"camera is in use by pipeline ({state}{f': {err}' if err else ''})")
+    if pipeline_inst.running:
+        if pipeline_inst.controller is not None:
+            # Wait up to 2.5 seconds for the streaming controller to yield its first frame if connecting
+            for _ in range(5):
+                captured = pipeline_inst.controller.get_current_frame()
+                if captured is not None and getattr(captured, "image", None) is not None:
+                    return captured.image.copy()
+                time.sleep(0.5)
+            state = pipeline_inst.controller.state
+            err = pipeline_inst.controller.last_error
+            raise CameraError(f"camera is in use by pipeline ({state}{f': {err}' if err else ''})")
+        raise CameraError("camera is initializing in pipeline")
 
     with _camera_lock:
+        if pipeline_inst.running:
+            raise CameraError("camera is in use by pipeline")
         camera = create_camera(cfg.data["camera"])
         camera.open()
         try:
@@ -321,4 +325,6 @@ def api_test_ocr():
 if __name__ == "__main__":
     # Pass the app object, not "app:app": the import string makes uvicorn import this file a
     # second time as module "app", which built a second pipeline (EasyOCR + Coqui loaded twice).
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

@@ -175,7 +175,7 @@
     "min_validity": 0.6
   },
   "tts": {
-    "engine": "coqui",
+    "engine": "windows",
     "fallback_engines": [
       "windows",
       "espeak"

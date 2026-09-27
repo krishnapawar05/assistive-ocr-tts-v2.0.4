@@ -34,9 +34,10 @@
 | `templates/base.html` | Active | Base layout template with accessibility toggles | Keep (refine) |
 | `templates/dashboard.html` | Active | Main dashboard template with student UI & collapsible diagnostics | Keep (refine) |
 | `core/*` (all 36 modules) | Active | Production pipeline, camera, frame, OCR, TTS, audio, text components | Keep |
-| `tests/*` (all 21 test files + helpers) | Active | Complete regression and benchmark suite (228 tests) | Keep |
+| `tests/*` (all 21 test files + helpers) | Active | Complete regression and benchmark suite (228 tests + 4 UI accessibility tests) | Keep |
 | `tests/fixtures/*` (all 16 images + manifest) | Active | Real and synthetic image test fixtures required by test suite | Keep |
-| `docs/*` (all ADRs, architecture, baselines) | Active | Architectural decision records and historical baselines | Keep |
+| `scripts/validate_real_world.py` | Active | Empirical live webcam, OCR, handwriting, and audio benchmark runner | Keep |
+| `docs/*` (all ADRs, architecture, baselines, validation) | Active | Architectural decision records, deployment plans, and validation evidence | Keep |
 
 ---
 
