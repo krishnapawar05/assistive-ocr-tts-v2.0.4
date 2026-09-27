@@ -104,7 +104,7 @@
         "device": "cpu",
         "det_limit_side_len": 0,
         "det_limit_type": "max",
-        "timeout_s": 60.0
+        "timeout_s": 90.0
       },
       "trocr": {
         "enabled": true,

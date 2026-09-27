@@ -42,7 +42,7 @@ ENGINE_CLASSES = {
     "tests.integration.test_tts_pipeline.EspeakLiveTest": ("TTS", "espeak"),
 }
 DEFAULT_MODULE_TIMEOUT_S = 1800
-DEFAULT_MIN_AVAILABLE_GB = 0.3
+DEFAULT_MIN_AVAILABLE_GB = 0.15
 LOW_MEMORY_GRACE_S = 5.0
 MONITOR_INTERVAL_S = 0.5
 
@@ -209,6 +209,7 @@ def main():
         for key in ("tests_run", "failures", "errors", "skipped"):
             totals[key] += report[key]
         rows.append((module, report, peak, elapsed))
+        time.sleep(1.0)
 
     print("\n=== Modules ===")
     for module, r, peak, elapsed in rows:

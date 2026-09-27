@@ -109,7 +109,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                 "device": "cpu",
                 "det_limit_side_len": 0,   # 0 = PaddleOCR default
                 "det_limit_type": "max",
-                "timeout_s": 60.0,
+                "timeout_s": 90.0,
             },
             "trocr": {
                 "enabled": True,
