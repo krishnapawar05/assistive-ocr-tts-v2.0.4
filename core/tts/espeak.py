@@ -20,6 +20,7 @@ class EspeakAdapter(TTSAdapter):
         super().__init__(engine_cfg, tts_cfg)
         self.executable: Optional[str] = None
         self._voices: List[str] = []
+        self._resolved_voice: Optional[str] = None  # set by _load() after distro-aware fallback
         self._proc: Optional[subprocess.Popen] = None
 
     def _find_executable(self) -> Optional[str]:
@@ -43,11 +44,27 @@ class EspeakAdapter(TTSAdapter):
         self.executable = exe
         voice = self.voice
         if voice not in self._voices:
-            return EngineStatus.LANGUAGE_NOT_SUPPORTED, f"espeak voice '{voice}' not installed"
+            # Try prefix match: 'en-us' → first voice starting with 'en' (e.g. 'en-gb' on some distros)
+            prefix = voice.split("-")[0]
+            fallback = next((v for v in self._voices if v.startswith(prefix + "-") or v == prefix), None)
+            if fallback:
+                logger.info("espeak voice '%s' not found; using '%s' instead", voice, fallback)
+                self._resolved_voice = fallback
+                voice = fallback
+            else:
+                return EngineStatus.LANGUAGE_NOT_SUPPORTED, (
+                    f"espeak voice '{voice}' not installed "
+                    f"(available: {', '.join(self._voices[:10])}{'...' if len(self._voices) > 10 else ''})"
+                )
+        else:
+            self._resolved_voice = voice
         return EngineStatus.READY, f"espeak-ng at {exe}, voice={voice}"
 
     @property
     def voice(self) -> str:
+        # Return the distro-resolved voice if _load() found a fallback, otherwise use config/language map
+        if self._resolved_voice:
+            return self._resolved_voice
         return self.cfg.get("voice") or engine_language(self.name, self.language)
 
     @property

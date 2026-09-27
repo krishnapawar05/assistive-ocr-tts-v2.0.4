@@ -20,7 +20,7 @@ ENGINE_LANGUAGE_CODES: Dict[str, Dict[str, str]] = {
     "easyocr": {"en": "en", "hi": "hi", "kn": "kn"},
     "paddle": {"en": "en", "hi": "hi", "kn": "ka"},
     "trocr": {"en": "en"},  # microsoft/trocr-base-handwritten is English-only
-    "espeak": {"en": "en", "hi": "hi", "kn": "kn"},
+    "espeak": {"en": "en-us", "hi": "hi", "kn": "kn"},
     "coqui": {"en": "en"},
     "windows": {"en": "en", "hi": "hi", "kn": "kn"},
 }
