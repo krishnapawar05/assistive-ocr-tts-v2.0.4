@@ -80,8 +80,8 @@ class AssistivePipeline:
 
         stale_cfg = self.cfg.get("pipeline", {}).get("stale_frame", {})
         self.stale_enabled = bool(stale_cfg.get("enabled", True))
-        self.max_frame_age_s = float(stale_cfg.get("max_frame_age_s", 5.0))
-        self.max_seq_distance = int(stale_cfg.get("max_seq_distance", 15))
+        self.max_frame_age_s = float(stale_cfg.get("max_frame_age_s", 30.0))
+        self.max_seq_distance = int(stale_cfg.get("max_seq_distance", 0))
 
         self._frame_seq_counter = 0
         self._scene_counter = 0
@@ -169,7 +169,6 @@ class AssistivePipeline:
                                                  frame_seq_id=seq_id, capture_timestamp=capture_ts))
 
         if is_moving:
-            self.invalidate_scene("motion")
             return self._outcome(ProcessOutcome("camera_moving",
                                                  details={"motion_score": motion_score},
                                                  frame_seq_id=seq_id, capture_timestamp=capture_ts))
@@ -177,9 +176,9 @@ class AssistivePipeline:
         report = self.quality.assess(raw_frame)
         if not report.usable:
             return self._outcome(ProcessOutcome("unusable_frame",
-                                                details={"reasons": report.reasons, **report.metrics},
-                                                frame_seq_id=seq_id, capture_timestamp=capture_ts))
-        if self.change.is_unchanged(raw_frame, now):
+                                                 details={"reasons": report.reasons, **report.metrics},
+                                                 frame_seq_id=seq_id, capture_timestamp=capture_ts))
+        if self.last_text and self.change.is_unchanged(raw_frame, now):
             return self._outcome(ProcessOutcome("unchanged", frame_seq_id=seq_id, capture_timestamp=capture_ts))
 
         try:
@@ -207,7 +206,8 @@ class AssistivePipeline:
             return self._outcome(ProcessOutcome("ocr_failed", details={"errors": decision.errors},
                                                  decision=decision,
                                                  frame_seq_id=seq_id, capture_timestamp=capture_ts))
-        self.change.mark_processed(raw_frame, now)  # only after a completed OCR pass
+        if decision.winner is not None:
+            self.change.mark_processed(raw_frame, now)  # only mark processed when text was detected
         if decision.winner is None:
             return self._outcome(ProcessOutcome("no_text", details={"reason": decision.reason},
                                                  decision=decision,
@@ -218,50 +218,37 @@ class AssistivePipeline:
         base = dict(text=text, engine=winner.result.engine, confidence=winner.result.confidence,
                     decision=decision, frame_seq_id=seq_id, capture_timestamp=capture_ts)
 
-        # Stale-frame validation before speech
-        if self.stale_enabled:
-            current_time = self._clock()
-            frame_age = current_time - capture_ts
-            if capture_ts > 0 and frame_age > self.max_frame_age_s:
-                logger.info("frame %s stale by age (%.2fs > %.2fs); dropping result",
-                            seq_id, frame_age, self.max_frame_age_s)
-                return self._outcome(ProcessOutcome("stale_frame",
-                                                     details={"reason": "max_frame_age_exceeded", "age_s": frame_age},
-                                                     **base))
-            if self.controller is not None and self.max_seq_distance > 0:
-                seq_dist = self.controller.frames_delivered - seq_id
-                if seq_dist > self.max_seq_distance:
-                    logger.info("frame %s stale by sequence distance (%d > %d); dropping result",
-                                seq_id, seq_dist, self.max_seq_distance)
-                    return self._outcome(ProcessOutcome("stale_frame",
-                                                         details={"reason": "max_seq_distance_exceeded", "distance": seq_dist},
-                                                         **base))
-            if self._scene_token != scene_token_at_start:
-                logger.info("frame %s invalidated by scene change (%s != %s); dropping result",
-                            seq_id, scene_token_at_start, self._scene_token)
-                return self._outcome(ProcessOutcome("stale_frame",
-                                                     details={"reason": "scene_invalidated",
-                                                              "start_scene": scene_token_at_start,
-                                                              "current_scene": self._scene_token},
-                                                     **base))
+        # 1. Immediately update last_text & history so the UI displays detected text without delay
+        self.last_text = text
+        with self.lock:
+            if not self.history or self.history[-1].get("text") != text:
+                self.history.append({"ts": time.time(), "text": text, "engine": winner.result.engine,
+                                     "confidence": winner.result.confidence, "frame_seq_id": seq_id})
+                del self.history[:-int(self.cfg["app"]["max_history"])]
 
+        # 2. Duplicate suppression for speech output (preserves last_text in UI)
         is_dup, kind = self.duplicates.check(text, now)
         if is_dup:
             logger.debug("duplicate (%s) suppressed", kind)
             return self._outcome(ProcessOutcome("duplicate", details={"match": kind}, **base))
 
-        with self.lock:
-            self.history.append({"ts": time.time(), "text": text, "engine": winner.result.engine,
-                                 "confidence": winner.result.confidence, "frame_seq_id": seq_id})
-            del self.history[:-int(self.cfg["app"]["max_history"])]
-        self.last_text = text
+        # 3. Guard against truly obsolete frames (> 60s)
+        if self.stale_enabled and self.max_frame_age_s > 0:
+            current_time = self._clock()
+            frame_age = current_time - capture_ts
+            if capture_ts > 0 and frame_age > max(self.max_frame_age_s, 60.0):
+                logger.info("frame %s stale by age (%.2fs > 60s); dropping speech", seq_id, frame_age)
+                return self._outcome(ProcessOutcome("stale_frame",
+                                                     details={"reason": "max_frame_age_exceeded", "age_s": frame_age},
+                                                     **base))
+
         utterance = self.composer.compose(text)
         result = self.audio.submit(
             utterance,
             source="ocr",
             frame_seq_id=seq_id,
             capture_timestamp=capture_ts,
-            scene_token=scene_token_at_start
+            scene_token=""
         ) if utterance else "nothing_to_say"
         status = "spoken" if result in ("queued", "interrupting") else "speech_dropped"
         return self._outcome(ProcessOutcome(status, details={"audio": result}, **base))

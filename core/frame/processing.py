@@ -59,15 +59,16 @@ class Preprocessor:
         color = frame if frame.ndim == 3 else cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         h, w = color.shape[:2]
 
-        max_side = int(self.cfg["max_input_side"])
+        if max(h, w) > int(self.cfg.get("crop_if_larger_than", 1920)):
+            m = float(self.cfg.get("crop_margin_fraction", 0.1))
+            color = color[int(h * m):int(h * (1 - m)), int(w * m):int(w * (1 - m))]
+            h, w = color.shape[:2]
+
+        max_side = int(self.cfg.get("max_input_side", 0))
         if max_side and max(h, w) > max_side:
             scale = max_side / float(max(h, w))
             color = cv2.resize(color, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
             h, w = color.shape[:2]
-
-        if max(h, w) > int(self.cfg["crop_if_larger_than"]):
-            m = float(self.cfg["crop_margin_fraction"])
-            color = color[int(h * m):int(h * (1 - m)), int(w * m):int(w * (1 - m))]
 
         min_side = int(self.cfg["min_side"])
         if color.shape[0] < min_side or color.shape[1] < min_side:

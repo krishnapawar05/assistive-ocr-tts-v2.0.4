@@ -123,6 +123,7 @@ async def dashboard(request: Request):
                 if d["status"] not in (EngineStatus.READY.value, EngineStatus.UNINITIALIZED.value)}
     is_cloud = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID") or os.environ.get("ENVIRONMENT", "").lower() == "railway")
     return templates.TemplateResponse(request, "dashboard.html", {
+        "request": request,
         "config": cfg.data, "voices": p.voices(), "assets": ASSET_VERSIONS, "unusable_ocr": unusable,
         "is_cloud": is_cloud})
 

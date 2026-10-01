@@ -33,8 +33,8 @@ class AudioManager:
                  is_stale_fn: Optional[Callable[[SpeechRequest], bool]] = None):
         self.policy = cfg["policy"]
         self.max_queue_size = int(cfg["max_queue_size"])
-        self.max_age_s = float(cfg["max_age_s"])
-        self.max_frame_age_s = float(cfg.get("max_frame_age_s", 5.0))
+        self.max_age_s = float(cfg.get("max_age_s", 60.0))
+        self.max_frame_age_s = float(cfg.get("max_frame_age_s", 60.0))
         self.shutdown_timeout_s = float(cfg["shutdown_timeout_s"])
         self._speak = speak_fn
         self._stop = stop_fn
@@ -163,9 +163,6 @@ class AudioManager:
                 if now - req.created > self.max_age_s:
                     is_stale = True
                     stale_reason = f"queue age {now - req.created:.1f}s > {self.max_age_s:.1f}s"
-                elif req.capture_timestamp > 0 and (now - req.capture_timestamp > self.max_frame_age_s):
-                    is_stale = True
-                    stale_reason = f"frame age {now - req.capture_timestamp:.1f}s > {self.max_frame_age_s:.1f}s"
                 elif self._active_scene_token and req.scene_token and (req.scene_token != self._active_scene_token):
                     is_stale = True
                     stale_reason = f"scene token mismatch ({req.scene_token} != {self._active_scene_token})"

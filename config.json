@@ -2,7 +2,7 @@
   "camera": {
     "source_type": "opencv",
     "camera_id": 0,
-    "resolution": "1080p",
+    "resolution": "720p",
     "resolutions": {
       "720p": [
         1280,
@@ -22,11 +22,11 @@
   },
   "frame": {
     "preprocess": {
-      "crop_if_larger_than": 1920,
+      "crop_if_larger_than": 800,
       "crop_margin_fraction": 0.1,
       "upscale_min_side": 400,
       "min_side": 10,
-      "max_input_side": 0
+      "max_input_side": 640
     },
     "quality": {
       "enabled": true,
@@ -41,34 +41,32 @@
     "change_detection": {
       "enabled": true,
       "thumbnail_size": 32,
-      "min_mean_abs_diff": 2.0,
-      "max_skip_s": 10.0
+      "min_mean_abs_diff": 2.5,
+      "max_skip_s": 5.0
     },
     "motion_detection": {
       "enabled": true,
       "thumbnail_size": 32,
-      "motion_threshold": 25.0,
-      "stabilization_frames": 2
+      "motion_threshold": 45.0,
+      "stabilization_frames": 1
     }
   },
   "ocr": {
     "engine": "easyocr",
-    "mode": "fallback",
+    "mode": "single_engine",
     "fallback_order": [
       "easyocr",
-      "paddle",
-      "tesseract",
-      "trocr"
+      "tesseract"
     ],
     "language": "en",
     "text_type": "printed",
-    "capture_interval": 0.2,
-    "min_confidence": 0.5,
-    "min_text_len": 3,
-    "accept_score": 0.75,
-    "min_final_score": 0.5,
-    "latency_budget_s": 0.0,
-    "serialize_engines": true,
+    "capture_interval": 0.5,
+    "min_confidence": 0.2,
+    "min_text_len": 2,
+    "accept_score": 0.4,
+    "min_final_score": 0.3,
+    "latency_budget_s": 8.0,
+    "serialize_engines": false,
     "preload": "primary",
     "engines": {
       "tesseract": {
@@ -81,19 +79,19 @@
         ],
         "oem": 3,
         "psm": 6,
-        "timeout_s": 20.0
+        "timeout_s": 8.0
       },
       "easyocr": {
         "enabled": true,
         "model_dir": "",
         "gpu": false,
         "include_english": true,
-        "canvas_size": 2560,
+        "canvas_size": 1280,
         "mag_ratio": 1.0,
-        "timeout_s": 60.0
+        "timeout_s": 8.0
       },
       "paddle": {
-        "enabled": true,
+        "enabled": false,
         "model_root": "~/.paddlex/official_models",
         "det_model": "PP-OCRv5_server_det",
         "rec_models": {
@@ -102,16 +100,16 @@
           "kn": "ka_PP-OCRv3_mobile_rec"
         },
         "device": "cpu",
-        "det_limit_side_len": 0,
+        "det_limit_side_len": 480,
         "det_limit_type": "max",
-        "timeout_s": 90.0
+        "timeout_s": 20.0
       },
       "trocr": {
-        "enabled": true,
+        "enabled": false,
         "model": "microsoft/trocr-base-handwritten",
         "max_new_tokens": 64,
         "line_min_confidence": 0.6,
-        "timeout_s": 60.0
+        "timeout_s": 20.0
       }
     },
     "regions": {
@@ -161,8 +159,8 @@
       "latency_budget_s": 10.0
     },
     "duplicates": {
-      "cooldown_s": 20.0,
-      "fuzzy_threshold": 90.0,
+      "cooldown_s": 5.0,
+      "fuzzy_threshold": 85.0,
       "refresh_on_repeat": true,
       "max_entries": 50
     }
