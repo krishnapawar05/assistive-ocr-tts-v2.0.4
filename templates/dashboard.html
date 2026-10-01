@@ -17,7 +17,16 @@
     </div>
 
     <div class="camera-viewport" role="region" aria-label="Live camera preview showing document alignment">
-      <img id="cameraPreview" src="/api/camera/snapshot" alt="Live camera preview" />
+      <!-- Server-camera mode (local): snapshot image refreshed by JS -->
+      <img id="cameraPreview" src="/api/camera/snapshot" alt="Live camera preview"
+           style="{% if is_cloud %}display:none{% endif %}" />
+
+      <!-- Browser-camera mode (Railway/cloud): getUserMedia live stream -->
+      <video id="browserCamera" autoplay playsinline muted
+             style="width:100%;height:100%;object-fit:cover;display:{% if is_cloud %}block{% else %}none{% endif %}"
+             aria-label="Browser camera live feed"></video>
+      <!-- Hidden canvas used to grab frames from the video -->
+      <canvas id="frameCanvas" style="display:none" aria-hidden="true"></canvas>
 
       <!-- Alignment frame corners -->
       <div class="align-frame" aria-hidden="true">
@@ -376,14 +385,15 @@
 <script id="svaConfigData" type="application/json">{{ config | tojson | safe }}</script>
 <script id="svaVoicesData" type="application/json">{{ voices | tojson | safe }}</script>
 <script>
-  const CONFIG = JSON.parse(document.getElementById('svaConfigData').textContent);
-  const VOICES = JSON.parse(document.getElementById('svaVoicesData').textContent);
+  const CONFIG  = JSON.parse(document.getElementById('svaConfigData').textContent);
+  const VOICES  = JSON.parse(document.getElementById('svaVoicesData').textContent);
+  const IS_CLOUD = {{ 'true' if is_cloud else 'false' }};
 </script>
 <script src="/static/dashboard.js?v={{ assets['dashboard.js'] }}"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function () {
     if (typeof Dashboard !== 'undefined') {
-      const dashboard = new Dashboard(CONFIG, VOICES);
+      const dashboard = new Dashboard(CONFIG, VOICES, IS_CLOUD);
       dashboard.init();
     } else {
       console.error('Dashboard class not found');

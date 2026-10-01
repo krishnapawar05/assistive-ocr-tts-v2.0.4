@@ -3,18 +3,24 @@
 // Audio-First, Accessible, Screen-Reader and Keyboard Enabled.
 
 class Dashboard {
-    constructor(config, voices) {
-        this.config = config;
-        this.voices = voices;
-        this.statusInterval = null;
+    constructor(config, voices, isCloud = false) {
+        this.config   = config;
+        this.voices   = voices;
+        this.isCloud  = isCloud;        // true on Railway — use browser camera + Web Speech
+        this.statusInterval  = null;
         this.historyInterval = null;
         this.isRunning = false;
         this.lastAnnouncement = '';
-        this.lastTextSeen = '';
-        this.lastMovingState = null;
-        this.lastCameraState = null;
+        this.lastTextSeen    = '';
+        this.lastMovingState  = null;
+        this.lastCameraState  = null;
         this.lastSpeakingState = null;
-        this._cameraErrors = 0;
+        this._cameraErrors   = 0;
+        // Cloud-mode state
+        this._browserStream  = null;    // MediaStream from getUserMedia
+        this._frameTimer     = null;    // setInterval handle for frame capture
+        this._speechSynth    = window.speechSynthesis || null;
+        this._lastSpokenText = '';      // avoid re-speaking same phrase
     }
 
     init() {
@@ -23,8 +29,14 @@ class Dashboard {
         this.updateRangeValues();
         this.loadConfig();
         this.startPolling();
-        this.announce('Smart Vision Assist ready. Press Space or Start Reading to begin.');
-        this.showAlert('info', 'Ready — press Start Reading or Space, then point the camera at text.');
+        if (this.isCloud) {
+            this._initBrowserCamera();
+            this.announce('Smart Vision Assist ready. Press Start Reading to activate your camera.');
+            this.showAlert('info', 'Cloud mode — your browser camera will be used. Press Start Reading.');
+        } else {
+            this.announce('Smart Vision Assist ready. Press Space or Start Reading to begin.');
+            this.showAlert('info', 'Ready — press Start Reading or Space, then point the camera at text.');
+        }
     }
 
     // ── Element helpers ──────────────────────────────────────
@@ -151,22 +163,118 @@ class Dashboard {
         this.updateRangeValues();
     }
 
+    // ── Browser Camera (Cloud / Railway mode) ────────────────
+    async _initBrowserCamera() {
+        const video  = this.el('browserCamera');
+        const offline = this.el('cameraOfflineState');
+        if (!video) return;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+                audio: false
+            });
+            this._browserStream = stream;
+            video.srcObject = stream;
+            this.setCameraOffline(false);
+            this.setCameraStatePill('active', 'Browser camera');
+            this.el('cameraOverlayText') && (this.el('cameraOverlayText').textContent = 'Position text inside the frame');
+        } catch (err) {
+            const msg = err.name === 'NotAllowedError'
+                ? 'Camera permission denied — allow camera access in your browser.'
+                : `Camera unavailable: ${err.message}`;
+            this.setCameraOffline(true, 'Camera unavailable', msg);
+            this.showAlert('danger', msg);
+            this.announce(msg);
+        }
+    }
+
+    _startFrameCapture() {
+        if (this._frameTimer) return;  // already running
+        const video  = this.el('browserCamera');
+        const canvas = this.el('frameCanvas');
+        if (!video || !canvas) return;
+        const interval = (this.config.ocr && this.config.ocr.capture_interval)
+            ? Math.max(1000, this.config.ocr.capture_interval * 1000)
+            : 1500;
+        this._frameTimer = setInterval(async () => {
+            if (!this.isRunning || !video.readyState || video.readyState < 2) return;
+            canvas.width  = video.videoWidth  || 640;
+            canvas.height = video.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            try {
+                const resp = await fetch('/api/process-frame', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: dataUrl })
+                });
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (data.text && data.text !== this.lastTextSeen) {
+                    this.lastTextSeen = data.text;
+                    this._showDetectedText(data.text);
+                    this.setTextState('detected', 'Detected');
+                    this._speakBrowser(data.text);
+                    this.announce(`Text detected: ${data.text}`);
+                    // Update history via server
+                    this.updateHistory();
+                }
+            } catch (_) { /* network hiccup — next tick */ }
+        }, interval);
+    }
+
+    _stopFrameCapture() {
+        if (this._frameTimer) { clearInterval(this._frameTimer); this._frameTimer = null; }
+    }
+
+    _speakBrowser(text) {
+        if (!this._speechSynth || !text) return;
+        if (text === this._lastSpokenText) return;  // don't repeat
+        this._lastSpokenText = text;
+        this._speechSynth.cancel();  // stop any current speech
+        const utt = new SpeechSynthesisUtterance(text);
+        utt.lang  = 'en-US';
+        utt.rate  = (this.config.tts && this.config.tts.speed) || 1.0;
+        utt.volume = (this.config.tts && this.config.tts.volume) || 0.9;
+        utt.onstart = () => this.setTextState('speaking', 'Speaking');
+        utt.onend   = () => this.setTextState('detected', 'Detected');
+        this._speechSynth.speak(utt);
+    }
+
     // ── Pipeline Controls ────────────────────────────────────
     async startPipeline() {
         const btn = this.el('startBtn');
         if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span><span>Starting…</span>'; }
         try {
-            const resp = await fetch('/api/start', { method: 'POST' });
-            const data = await resp.json();
-            if (data.status === 'started') {
+            if (this.isCloud) {
+                // Cloud: ensure browser camera is active, start frame-capture loop
+                if (!this._browserStream || !this._browserStream.active) {
+                    await this._initBrowserCamera();
+                }
                 this.isRunning = true;
+                this._startFrameCapture();
                 this.setSystemStatus('reading', 'Reading');
                 this.updateActionButtons();
-                this.setActionHint('Camera active — point at text to begin reading.');
-                this.announce('System started. Camera active. Point camera at text.');
-                this.showAlert('success', 'Reading started — point the camera at text.');
+                this.setActionHint('Hold text steady in front of your camera.');
+                this.announce('Reading started. Point your camera at text.');
+                this.showAlert('success', 'Reading started — point your camera at text.');
+                // Also notify server (for status tracking)
+                fetch('/api/start', { method: 'POST' }).catch(() => {});
             } else {
-                this.showAlert('danger', 'Could not start the reading system.');
+                // Local: server controls the physical camera
+                const resp = await fetch('/api/start', { method: 'POST' });
+                const data = await resp.json();
+                if (data.status === 'started') {
+                    this.isRunning = true;
+                    this.setSystemStatus('reading', 'Reading');
+                    this.updateActionButtons();
+                    this.setActionHint('Camera active — point at text to begin reading.');
+                    this.announce('System started. Camera active. Point camera at text.');
+                    this.showAlert('success', 'Reading started — point the camera at text.');
+                } else {
+                    this.showAlert('danger', 'Could not start the reading system.');
+                }
             }
         } catch (err) {
             this.showAlert('danger', `Error starting: ${err.message}`);
@@ -176,36 +284,69 @@ class Dashboard {
     }
 
     async stopPipeline() {
-        try {
-            const resp = await fetch('/api/stop', { method: 'POST' });
-            const data = await resp.json();
-            if (data.status === 'stopped') {
-                this.isRunning = false;
-                this.setSystemStatus('paused', 'Paused');
-                this.updateActionButtons();
-                this.setActionHint('Reading paused — press Start Reading or Space to resume.');
-                this.announce('System paused.');
-                this.showAlert('info', 'Paused.');
+        if (this.isCloud) {
+            this.isRunning = false;
+            this._stopFrameCapture();
+            if (this._speechSynth) this._speechSynth.pause();
+            this.setSystemStatus('paused', 'Paused');
+            this.updateActionButtons();
+            this.setActionHint('Paused — press Start Reading to resume.');
+            this.announce('Paused.');
+            this.showAlert('info', 'Paused.');
+            fetch('/api/stop', { method: 'POST' }).catch(() => {});
+        } else {
+            try {
+                const resp = await fetch('/api/stop', { method: 'POST' });
+                const data = await resp.json();
+                if (data.status === 'stopped') {
+                    this.isRunning = false;
+                    this.setSystemStatus('paused', 'Paused');
+                    this.updateActionButtons();
+                    this.setActionHint('Reading paused — press Start Reading or Space to resume.');
+                    this.announce('System paused.');
+                    this.showAlert('info', 'Paused.');
+                }
+            } catch (err) {
+                this.showAlert('danger', `Error pausing: ${err.message}`);
             }
-        } catch (err) {
-            this.showAlert('danger', `Error pausing: ${err.message}`);
         }
     }
 
     async stopSpeech() {
-        try {
-            const resp = await fetch('/api/stop-speech', { method: 'POST' });
-            if (resp.ok) {
-                this.announce('Speech stopped.');
-                this.setTextState('idle', 'Idle');
-                this.showAlert('info', 'Speech stopped.');
+        if (this.isCloud && this._speechSynth) {
+            this._speechSynth.cancel();
+            this._lastSpokenText = '';
+            this.setTextState('idle', 'Idle');
+            this.announce('Speech stopped.');
+            this.showAlert('info', 'Speech stopped.');
+        } else {
+            try {
+                const resp = await fetch('/api/stop-speech', { method: 'POST' });
+                if (resp.ok) {
+                    this.announce('Speech stopped.');
+                    this.setTextState('idle', 'Idle');
+                    this.showAlert('info', 'Speech stopped.');
+                }
+            } catch (err) {
+                this.showAlert('warning', `Could not stop speech: ${err.message}`);
             }
-        } catch (err) {
-            this.showAlert('warning', `Could not stop speech: ${err.message}`);
         }
     }
 
     async replayAudio() {
+        if (this.isCloud) {
+            // Replay last detected text using Web Speech API
+            if (this.lastTextSeen) {
+                this._lastSpokenText = '';  // allow replay
+                this._speakBrowser(this.lastTextSeen);
+                this.announce(`Replaying: ${this.lastTextSeen.substring(0, 60)}`);
+                this.showAlert('success', 'Replaying…');
+            } else {
+                this.announce('No text to replay yet.');
+                this.showAlert('warning', 'No recognized text available to replay.');
+            }
+            return;
+        }
         try {
             // Try WAV replay first (Coqui TTS stores audio)
             const resp = await fetch('/api/replay');
@@ -466,8 +607,8 @@ class Dashboard {
 
             this.isRunning = pipe.running || false;
 
-            // Refresh camera while running
-            if (this.isRunning) this.refreshCameraPreview();
+            // Refresh server camera snapshot (local mode only — cloud uses browser video stream)
+            if (this.isRunning && !this.isCloud) this.refreshCameraPreview();
 
             const camState = pipe.camera  ? pipe.camera.state       : 'stopped';
             const isMoving = pipe.motion  ? pipe.motion.is_moving   : false;

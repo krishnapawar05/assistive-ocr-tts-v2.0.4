@@ -11,3 +11,17 @@ last_audio.wav
 
 # Local benchmark outputs that may contain captured frames
 tests/benchmarks/output/
+
+# Debug/test screenshots captured during development
+*.png
+*.jpg
+*.jpeg
+webcam_*.png
+webcam_*.jpg
+test_screenshot.png
+cam_*.png
+clean_cam.png
+center_crop.png
+clock_crop.png
+new_*.png
+new_*.jpg

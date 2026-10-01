@@ -1,25 +1,25 @@
 # requirements-railway.txt — Railway cloud deployment (Linux, no GPU, no audio hardware)
-# Stripped-down set for Railway's 512 MB free-tier containers.
-# Heavy ML models (PaddlePaddle, TrOCR/transformers, Coqui TTS, EasyOCR full) are excluded.
-# OCR runs via Tesseract (installed via apt in Dockerfile).
-# TTS runs via eSpeak (installed via apt in Dockerfile).
+# OCR: Tesseract (installed via apt-get in Dockerfile)
+# TTS: eSpeak-NG (installed via apt-get in Dockerfile)
+# Camera: NONE — browser sends frames via /api/process-frame (getUserMedia WebRTC)
 
-# --- Web dashboard ---
+# --- Web framework ---
 fastapi>=0.110,<1.0
 uvicorn[standard]>=0.29,<1.0
 jinja2>=3.1,<4.0
+python-multipart>=0.0.9,<1.0
 
 # --- Vision / numerics ---
 opencv-python-headless>=4.10,<5.0
 numpy>=1.26,<2.3
 Pillow>=10.0,<13.0
-psutil>=5.9,<8.0
 
-# --- OCR (Tesseract-only for Railway; pytesseract wraps the system binary) ---
+# --- OCR (Tesseract wraps system binary installed via apt) ---
 pytesseract>=0.3.10,<0.4
 
 # --- Text processing ---
 rapidfuzz>=3.0,<4.0
+psutil>=5.9,<8.0
 
-# --- Audio / TTS (soundfile only; eSpeak used via subprocess - no PortAudio needed) ---
+# --- Audio helpers ---
 soundfile>=0.12,<0.14

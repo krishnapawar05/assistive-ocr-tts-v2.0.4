@@ -40,6 +40,35 @@ logging.basicConfig(
 logger = logging.getLogger("assistive_app")
 apply_offline_env(cfg.data["app"]["offline_mode"])  # before any model library is imported
 
+# ── Railway / cloud environment overrides ─────────────────────────────────────
+IS_CLOUD = bool(
+    os.environ.get("RAILWAY_ENVIRONMENT")
+    or os.environ.get("RAILWAY_PROJECT_ID")
+    or os.environ.get("ENVIRONMENT", "").lower() == "railway"
+)
+if IS_CLOUD:
+    # No physical camera on Railway — browser sends frames via /api/process-frame
+    # No Windows SAPI — use eSpeak (installed via apt-get)
+    # No EasyOCR/PaddleOCR models — use Tesseract (system binary, instant)
+    logger.info("Railway environment detected — applying cloud config overrides")
+    ocr = cfg.data["ocr"]
+    ocr["engine"] = "tesseract"
+    ocr["fallback_order"] = ["tesseract"]
+    ocr["serialize_engines"] = False
+    ocr["preload"] = "primary"
+    ocr["capture_interval"] = 0.5
+    ocr["min_confidence"] = 0.20
+    ocr["min_text_len"] = 2
+    ocr["latency_budget_s"] = 8.0
+    ocr["engines"]["tesseract"]["timeout_s"] = 8.0
+    ocr["engines"]["easyocr"]["enabled"] = False
+    ocr["engines"]["paddle"]["enabled"] = False
+    ocr["engines"]["trocr"]["enabled"] = False
+    ocr["duplicates"]["cooldown_s"] = 5.0
+    cfg.data["tts"]["engine"] = "espeak"
+    cfg.data["tts"]["fallback_engines"] = ["espeak"]
+# ──────────────────────────────────────────────────────────────────────────────
+
 from core.frame.processing import FrameError  # noqa: E402
 from core.pipeline import AssistivePipeline  # noqa: E402
 
@@ -121,11 +150,10 @@ async def dashboard(request: Request):
     # Engines that cannot run (unavailable or failed); READY and not-yet-loaded ones are usable.
     unusable = {name: d["status"] for name, d in p.diagnostics()["ocr_engines"].items()
                 if d["status"] not in (EngineStatus.READY.value, EngineStatus.UNINITIALIZED.value)}
-    is_cloud = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID") or os.environ.get("ENVIRONMENT", "").lower() == "railway")
     return templates.TemplateResponse(request, "dashboard.html", {
         "request": request,
-        "config": cfg.data, "voices": p.voices(), "assets": ASSET_VERSIONS, "unusable_ocr": unusable,
-        "is_cloud": is_cloud})
+        "config": cfg.data, "voices": p.voices(), "assets": ASSET_VERSIONS,
+        "unusable_ocr": unusable, "is_cloud": IS_CLOUD})
 
 
 @app.post("/api/process-frame")

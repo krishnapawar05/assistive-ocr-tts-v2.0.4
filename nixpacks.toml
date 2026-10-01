@@ -1,27 +1,28 @@
-# nixpacks.toml — Railway deployment configuration for Smart Vision Assist
+# nixpacks.toml — Railway Nixpacks build for Smart Vision Assist
 [phases.setup]
 nixPkgs = [
   "python310",
   "gcc",
-  "glibc",
   "libGL",
   "glib",
   "espeak-ng",
   "tesseract",
-  "ffmpeg",
-  "libsndfile",
-  "alsa-lib",
-  "portaudio"
+  "libsndfile"
 ]
 
 [phases.install]
 cmds = [
   "python -m pip install --upgrade pip",
-  "pip install -r requirements.txt"
+  "pip install -r requirements-railway.txt"
 ]
 
 [phases.build]
 cmds = []
+
+[variables]
+RAILWAY_ENVIRONMENT = "production"
+PYTHONUNBUFFERED = "1"
+DISABLE_MODEL_SOURCE_CHECK = "1"
 
 [start]
 cmd = "python app.py"

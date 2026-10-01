@@ -180,7 +180,7 @@
     ],
     "language": "en",
     "coqui_model": "tts_models/en/vctk/vits",
-    "voice": "p335",
+    "voice": "Microsoft David Desktop",
     "speed": 1,
     "volume": 0.9,
     "max_chars": 300,
