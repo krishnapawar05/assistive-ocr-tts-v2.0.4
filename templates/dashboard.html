@@ -203,12 +203,12 @@
                 <label class="field-label" for="resolution">Resolution</label>
                 <div class="select-wrap">
                   <select id="resolution" name="resolution" class="field-select">
-                    {% if config['camera']['resolution'] == '1080p' %}
-                    <option value="720p">HD 720p — recommended</option>
-                    <option value="1080p" selected>Full HD 1080p</option>
+                    {% if config['camera']['resolution'] == '720p' %}
+                    <option value="1080p">Full HD 1080p — recommended</option>
+                    <option value="720p" selected>HD 720p</option>
                     {% else %}
-                    <option value="720p" selected>HD 720p — recommended</option>
-                    <option value="1080p">Full HD 1080p</option>
+                    <option value="1080p" selected>Full HD 1080p — recommended</option>
+                    <option value="720p">HD 720p</option>
                     {% endif %}
                   </select>
                 </div>

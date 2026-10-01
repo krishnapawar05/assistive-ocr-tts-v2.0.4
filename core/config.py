@@ -21,7 +21,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "camera": {
         "source_type": "opencv",          # opencv | gstreamer
         "camera_id": 0,
-        "resolution": "720p",
+        "resolution": "1080p",
         "resolutions": {"720p": [1280, 720], "1080p": [1920, 1080]},
         "gstreamer_framerate": 30,
         "buffer_size": 1,
@@ -68,10 +68,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "language": "en",
         "text_type": "printed",            # printed | handwritten
         "capture_interval": 0.2,
-        "min_confidence": 0.5,             # engine-reported confidence below this is discarded
+        "min_confidence": 0.30,            # engine-reported confidence below this is discarded
         "min_text_len": 3,
-        "accept_score": 0.75,              # fallback mode stops once a candidate scores this high
-        "min_final_score": 0.5,            # nothing below this is ever spoken
+        "accept_score": 0.50,              # fallback mode stops once a candidate scores this high
+        "min_final_score": 0.35,           # nothing below this is ever spoken
         "latency_budget_s": 0.0,           # max OCR duration before aborting fallback (0 = disabled)
         "serialize_engines": True,         # never run two OCR engines at once (memory safety)
         "preload": "primary",              # primary: load fallback engines on first use | all
@@ -85,7 +85,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                     "/usr/bin/tesseract",
                 ],
                 "oem": 3,
-                "psm": 6,
+                "psm": 3,
                 "timeout_s": 20.0,
             },
             "easyocr": {

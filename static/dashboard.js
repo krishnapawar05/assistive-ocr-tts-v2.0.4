@@ -160,7 +160,7 @@ class Dashboard {
             const set = (id, v) => { const el = this.el(id); if (el) el.value = v; };
             set('cameraSource', cam.source_type || 'opencv');
             set('cameraId',     cam.camera_id   || 0);
-            set('resolution',   cam.resolution  || '720p');
+            set('resolution',   cam.resolution  || '1080p');
         }
         this.updateRangeValues();
     }
@@ -172,13 +172,13 @@ class Dashboard {
         if (!video) return;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
                 audio: false
             });
             this._browserStream = stream;
             video.srcObject = stream;
             this.setCameraOffline(false);
-            this.setCameraStatePill('active', 'Browser camera');
+            this.setCameraStatePill('active', 'Browser camera (1080p)');
             this.el('cameraOverlayText') && (this.el('cameraOverlayText').textContent = 'Position text inside the frame');
         } catch (err) {
             const msg = err.name === 'NotAllowedError'
@@ -209,11 +209,11 @@ class Dashboard {
                 return;
             }
 
-            canvas.width  = video.videoWidth  || 640;
-            canvas.height = video.videoHeight || 480;
+            canvas.width  = video.videoWidth  || 1920;
+            canvas.height = video.videoHeight || 1080;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
             try {
                 const resp = await fetch('/api/process-frame', {
                     method: 'POST',

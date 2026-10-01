@@ -56,10 +56,12 @@ class TesseractOCRAdapter(OCRAdapter):
 
     def _recognize(self, image: np.ndarray) -> OCRResult:
         pt = self._pt
-        config = f"--oem {int(self.cfg['oem'])} --psm {int(self.cfg['psm'])}"
+        # Use PSM 3 (fully automatic segmentation) for scene/camera text if psm is not explicitly configured
+        psm = int(self.cfg.get("psm", 3))
+        config = f"--oem {int(self.cfg['oem'])} --psm {psm}"
         data = pt.image_to_data(image, lang=self._lang, config=config, output_type=pt.Output.DICT,
                                 timeout=float(self.cfg["timeout_s"]))
-        min_word_conf = float(self.cfg.get("min_word_conf", 40.0))
+        min_word_conf = float(self.cfg.get("min_word_conf", 15.0))
         lines = {}
         confs: List[float] = []
         boxes: List[BBox] = []
@@ -68,16 +70,11 @@ class TesseractOCRAdapter(OCRAdapter):
             conf = float(data["conf"][i])
             if not word or conf < 0:  # conf -1 marks non-word layout rows
                 continue
-            # Filter low-confidence words (background noise, false detections on walls/faces)
             if conf < min_word_conf:
                 continue
-            # For 1-character words (except common letters 'a','i','A','I' and single digits in context),
-            # require higher confidence to avoid hallucinated noise symbols like '°', '~', '|'
-            if len(word) == 1:
-                if word.lower() not in ("a", "i") and not word.isdigit() and conf < 65.0:
-                    continue
-                if conf < 50.0:
-                    continue
+            # For 1-character tokens that are not standard letters/digits, require higher confidence
+            if len(word) == 1 and word.lower() not in ("a", "i") and not word.isdigit() and conf < 50.0:
+                continue
             key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
             lines.setdefault(key, []).append(word)
             confs.append(conf / 100.0)

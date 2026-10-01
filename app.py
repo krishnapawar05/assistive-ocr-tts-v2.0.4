@@ -60,16 +60,18 @@ if IS_CLOUD:
     ocr["serialize_engines"] = False
     ocr["preload"] = "primary"
     ocr["capture_interval"] = 0.5
-    ocr["min_confidence"] = 0.50
+    ocr["min_confidence"] = 0.30
     ocr["min_text_len"] = 3
-    ocr["accept_score"] = 0.70
-    ocr["min_final_score"] = 0.50
+    ocr["accept_score"] = 0.50
+    ocr["min_final_score"] = 0.35
     ocr["latency_budget_s"] = 8.0
+    ocr["engines"]["tesseract"]["psm"] = 3
     ocr["engines"]["tesseract"]["timeout_s"] = 8.0
     ocr["engines"]["easyocr"]["enabled"] = False
     ocr["engines"]["paddle"]["enabled"] = False
     ocr["engines"]["trocr"]["enabled"] = False
     ocr["duplicates"]["cooldown_s"] = 5.0
+    cfg.data["camera"]["resolution"] = "1080p"
     cfg.data["tts"]["engine"] = "espeak"
     cfg.data["tts"]["fallback_engines"] = ["espeak"]
 
@@ -82,10 +84,10 @@ elif IS_JETSON:
     ocr["serialize_engines"] = False
     ocr["preload"] = "primary"
     ocr["capture_interval"] = 0.5
-    ocr["min_confidence"] = 0.50
+    ocr["min_confidence"] = 0.30
     ocr["min_text_len"] = 3
-    ocr["accept_score"] = 0.70
-    ocr["min_final_score"] = 0.50
+    ocr["accept_score"] = 0.50
+    ocr["min_final_score"] = 0.35
     ocr["latency_budget_s"] = 6.0
     ocr["engines"]["easyocr"]["enabled"] = True
     ocr["engines"]["easyocr"]["gpu"] = True      # CUDA via Jetson PyTorch wheel
@@ -93,6 +95,7 @@ elif IS_JETSON:
     ocr["engines"]["paddle"]["enabled"] = False   # save RAM; easyocr+GPU is sufficient
     ocr["engines"]["trocr"]["enabled"] = False
     ocr["duplicates"]["cooldown_s"] = 5.0
+    cfg.data["camera"]["resolution"] = "1080p"
     cfg.data["tts"]["engine"] = "coqui"
     cfg.data["tts"]["fallback_engines"] = ["coqui", "espeak"]
     cfg.data["app"]["offline_mode"] = True        # guarantee no phone-home
