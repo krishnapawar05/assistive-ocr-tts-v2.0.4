@@ -163,6 +163,9 @@ class AudioManager:
                 if now - req.created > self.max_age_s:
                     is_stale = True
                     stale_reason = f"queue age {now - req.created:.1f}s > {self.max_age_s:.1f}s"
+                elif req.capture_timestamp > 0 and self.max_frame_age_s > 0 and (now - req.capture_timestamp > self.max_frame_age_s):
+                    is_stale = True
+                    stale_reason = f"frame age {now - req.capture_timestamp:.1f}s > {self.max_frame_age_s:.1f}s"
                 elif self._active_scene_token and req.scene_token and (req.scene_token != self._active_scene_token):
                     is_stale = True
                     stale_reason = f"scene token mismatch ({req.scene_token} != {self._active_scene_token})"

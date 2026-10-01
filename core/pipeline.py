@@ -232,14 +232,34 @@ class AssistivePipeline:
             logger.debug("duplicate (%s) suppressed", kind)
             return self._outcome(ProcessOutcome("duplicate", details={"match": kind}, **base))
 
-        # 3. Guard against truly obsolete frames (> 60s)
+        # 3. Guard against stale / obsolete frames
+        if self.stale_enabled and self._scene_token != scene_token_at_start:
+            logger.info("frame %s stale by scene shift (%s != %s); dropping speech",
+                        seq_id, scene_token_at_start, self._scene_token)
+            return self._outcome(ProcessOutcome("stale_frame",
+                                                 details={"reason": "scene_invalidated",
+                                                          "scene_at_start": scene_token_at_start,
+                                                          "scene_now": self._scene_token},
+                                                 **base))
+
         if self.stale_enabled and self.max_frame_age_s > 0:
             current_time = self._clock()
             frame_age = current_time - capture_ts
-            if capture_ts > 0 and frame_age > max(self.max_frame_age_s, 60.0):
-                logger.info("frame %s stale by age (%.2fs > 60s); dropping speech", seq_id, frame_age)
+            if capture_ts > 0 and frame_age > self.max_frame_age_s:
+                logger.info("frame %s stale by age (%.2fs > %.2fs); dropping speech",
+                            seq_id, frame_age, self.max_frame_age_s)
                 return self._outcome(ProcessOutcome("stale_frame",
                                                      details={"reason": "max_frame_age_exceeded", "age_s": frame_age},
+                                                     **base))
+
+        if self.stale_enabled and self.max_seq_distance > 0 and self.controller is not None:
+            delivered = getattr(self.controller, "frames_delivered", 0)
+            if delivered > 0 and seq_id > 0 and (delivered - seq_id) > self.max_seq_distance:
+                logger.info("frame %s stale by sequence distance (%d - %d = %d > %d); dropping speech",
+                            seq_id, delivered, seq_id, delivered - seq_id, self.max_seq_distance)
+                return self._outcome(ProcessOutcome("stale_frame",
+                                                     details={"reason": "max_seq_distance_exceeded",
+                                                              "seq_id": seq_id, "delivered": delivered},
                                                      **base))
 
         utterance = self.composer.compose(text)
@@ -248,7 +268,7 @@ class AssistivePipeline:
             source="ocr",
             frame_seq_id=seq_id,
             capture_timestamp=capture_ts,
-            scene_token=""
+            scene_token=scene_token_at_start
         ) if utterance else "nothing_to_say"
         status = "spoken" if result in ("queued", "interrupting") else "speech_dropped"
         return self._outcome(ProcessOutcome(status, details={"audio": result}, **base))
@@ -269,6 +289,10 @@ class AssistivePipeline:
     def _process_loop(self) -> None:
         wait = float(self.cfg["pipeline"]["frame_wait_timeout_s"])
         while self.running:
+            # While speech is actively reading loudly, pause frame processing so speech is not interrupted
+            if self.audio.is_speaking:
+                time.sleep(0.1)
+                continue
             frame = self.controller.get_frame(wait) if self.controller else None
             if frame is None or not self.running:
                 continue

@@ -36,9 +36,14 @@ class TextProcessorTest(unittest.TestCase):
 
     def test_is_valid(self):
         self.assertEqual(self.p.is_valid("Room 204"), (True, "ok"))
+        self.assertEqual(self.p.is_valid("We proudly present our project, designed to deliver innovative and impactful solutions."), (True, "ok"))
         self.assertEqual(self.p.is_valid("ab")[1], "too_short")
         self.assertEqual(self.p.is_valid("..."), (False, "no_letters_or_digits"))
         self.assertEqual(self.p.is_valid("a§§§§§§§")[1], "low_validity")
+        # Reject hallucinated empty-scene noise fragments
+        self.assertEqual(self.p.is_valid("2 oe. oo A"), (False, "gibberish_fragments"))
+        self.assertEqual(self.p.is_valid("al - m"), (False, "gibberish_fragments"))
+        self.assertEqual(self.p.is_valid("x q"), (False, "gibberish_fragments"))
 
     def test_language_consistency(self):
         self.assertEqual(self.p.language_consistency("Room 204", "en"), 1.0)

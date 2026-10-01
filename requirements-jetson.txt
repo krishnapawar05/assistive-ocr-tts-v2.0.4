@@ -1,0 +1,39 @@
+# requirements-jetson.txt — NVIDIA Jetson Orin Nano (JetPack 6.x, aarch64, CUDA 12.x)
+# Offline-first edge deployment. GPU-accelerated OCR + neural TTS.
+#
+# IMPORTANT BEFORE pip install:
+#   1. Install PyTorch for Jetson from NVIDIA wheel server (see install_jetson.sh)
+#   2. Install system packages (see install_jetson.sh)
+#   3. Use: pip install -r requirements-jetson.txt
+
+# ─── Web framework ────────────────────────────────────────────────────────────
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+jinja2>=3.1,<4.0
+python-multipart>=0.0.9,<1.0
+
+# ─── Vision / numerics ────────────────────────────────────────────────────────
+# NOTE: Do NOT install opencv-python or opencv-python-headless — use the
+# system OpenCV that JetPack ships (already GPU-accelerated via GStreamer).
+numpy>=1.26,<2.3
+Pillow>=10.0,<13.0
+psutil>=5.9,<8.0
+
+# ─── OCR (GPU-accelerated) ────────────────────────────────────────────────────
+# EasyOCR picks up CUDA automatically via the Jetson PyTorch wheel.
+easyocr>=1.7,<2.0
+
+# Tesseract Python wrapper (lightweight fallback, binary installed via apt)
+pytesseract>=0.3.10,<0.4
+
+# ─── TTS — Neural voice (Coqui) ───────────────────────────────────────────────
+# TTS model is downloaded once and cached in ~/.local/share/tts
+# Uses GPU automatically when CUDA is available.
+TTS>=0.22,<1.0
+
+# ─── Audio output (local speaker on Jetson) ───────────────────────────────────
+sounddevice>=0.4.6,<0.5
+soundfile>=0.12,<0.14
+
+# ─── Text processing ──────────────────────────────────────────────────────────
+rapidfuzz>=3.0,<4.0

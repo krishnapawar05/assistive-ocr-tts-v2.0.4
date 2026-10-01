@@ -21,6 +21,8 @@ class Dashboard {
         this._frameTimer     = null;    // setInterval handle for frame capture
         this._speechSynth    = window.speechSynthesis || null;
         this._lastSpokenText = '';      // avoid re-speaking same phrase
+        this.isSpeaking      = false;   // true when speech is actively reading loudly
+        this._speechCooldownUntil = 0;  // timestamp until which new frame capture is paused after speech ends
     }
 
     init() {
@@ -198,6 +200,15 @@ class Dashboard {
             : 1500;
         this._frameTimer = setInterval(async () => {
             if (!this.isRunning || !video.readyState || video.readyState < 2) return;
+            // CRITICAL: Complete reading current text loudly! Do not capture new frames while speaking
+            const synthSpeaking = this._speechSynth && (this._speechSynth.speaking || this._speechSynth.pending);
+            if (this.isSpeaking || synthSpeaking) {
+                return;
+            }
+            if (Date.now() < this._speechCooldownUntil) {
+                return;
+            }
+
             canvas.width  = video.videoWidth  || 640;
             canvas.height = video.videoHeight || 480;
             const ctx = canvas.getContext('2d');
@@ -211,12 +222,13 @@ class Dashboard {
                 });
                 if (!resp.ok) return;
                 const data = await resp.json();
-                if (data.text && data.text !== this.lastTextSeen) {
-                    this.lastTextSeen = data.text;
-                    this._showDetectedText(data.text);
+                const text = (data.text || '').trim();
+                if (text && text !== this.lastTextSeen) {
+                    this.lastTextSeen = text;
+                    this._showDetectedText(text);
                     this.setTextState('detected', 'Detected');
-                    this._speakBrowser(data.text);
-                    this.announce(`Text detected: ${data.text}`);
+                    this._speakBrowser(text);
+                    this.announce(`Text detected: ${text}`);
                     // Update history via server
                     this.updateHistory();
                 }
@@ -230,15 +242,46 @@ class Dashboard {
 
     _speakBrowser(text) {
         if (!this._speechSynth || !text) return;
-        if (text === this._lastSpokenText) return;  // don't repeat
+        if (text === this._lastSpokenText) return;  // don't repeat identical text
+
+        // Do NOT abort or interrupt ongoing speech! Complete reading text loudly before speaking next
+        if (this.isSpeaking || this._speechSynth.speaking || this._speechSynth.pending) {
+            console.log('Speech in progress: completing current text loudly before taking new image.');
+            return;
+        }
+
         this._lastSpokenText = text;
-        this._speechSynth.cancel();  // stop any current speech
+        this.isSpeaking = true;
+
         const utt = new SpeechSynthesisUtterance(text);
         utt.lang  = 'en-US';
         utt.rate  = (this.config.tts && this.config.tts.speed) || 1.0;
-        utt.volume = (this.config.tts && this.config.tts.volume) || 0.9;
-        utt.onstart = () => this.setTextState('speaking', 'Speaking');
-        utt.onend   = () => this.setTextState('detected', 'Detected');
+        utt.volume = 1.0; // read loudly!
+
+        utt.onstart = () => {
+            this.isSpeaking = true;
+            this.setTextState('speaking', 'Speaking');
+            this.setSystemStatus('reading', 'Speaking loudly');
+            const overlayText = this.el('cameraOverlayText');
+            if (overlayText) overlayText.textContent = 'Reading text aloud…';
+        };
+
+        utt.onend = () => {
+            this.isSpeaking = false;
+            // Cooldown pause of 2.5 seconds to let user hear full sentence and transition comfortably
+            this._speechCooldownUntil = Date.now() + 2500;
+            this.setTextState('detected', 'Reading complete');
+            this.setSystemStatus('reading', 'Reading');
+            const overlayText = this.el('cameraOverlayText');
+            if (overlayText) overlayText.textContent = 'Ready for next image';
+        };
+
+        utt.onerror = (err) => {
+            console.warn('SpeechSynthesis error:', err);
+            this.isSpeaking = false;
+            this.setTextState('detected', 'Detected');
+        };
+
         this._speechSynth.speak(utt);
     }
 
@@ -287,7 +330,8 @@ class Dashboard {
         if (this.isCloud) {
             this.isRunning = false;
             this._stopFrameCapture();
-            if (this._speechSynth) this._speechSynth.pause();
+            this.isSpeaking = false;
+            if (this._speechSynth) this._speechSynth.cancel();
             this.setSystemStatus('paused', 'Paused');
             this.updateActionButtons();
             this.setActionHint('Paused — press Start Reading to resume.');
@@ -314,6 +358,7 @@ class Dashboard {
 
     async stopSpeech() {
         if (this.isCloud && this._speechSynth) {
+            this.isSpeaking = false;
             this._speechSynth.cancel();
             this._lastSpokenText = '';
             this.setTextState('idle', 'Idle');
@@ -338,9 +383,11 @@ class Dashboard {
             // Replay last detected text using Web Speech API
             if (this.lastTextSeen) {
                 this._lastSpokenText = '';  // allow replay
+                if (this._speechSynth) this._speechSynth.cancel();
+                this.isSpeaking = false;
                 this._speakBrowser(this.lastTextSeen);
                 this.announce(`Replaying: ${this.lastTextSeen.substring(0, 60)}`);
-                this.showAlert('success', 'Replaying…');
+                this.showAlert('success', 'Replaying loudly…');
             } else {
                 this.announce('No text to replay yet.');
                 this.showAlert('warning', 'No recognized text available to replay.');
@@ -612,7 +659,9 @@ class Dashboard {
 
             const camState = pipe.camera  ? pipe.camera.state       : 'stopped';
             const isMoving = pipe.motion  ? pipe.motion.is_moving   : false;
-            const isSpeaking = pipe.audio ? pipe.audio.speaking     : false;
+            const isSpeaking = this.isCloud
+                ? (this.isSpeaking || (this._speechSynth && (this._speechSynth.speaking || this._speechSynth.pending)))
+                : (pipe.audio ? pipe.audio.speaking : false);
 
             // ── System status dot + text ──────────────────────
             if (!this.isRunning) {

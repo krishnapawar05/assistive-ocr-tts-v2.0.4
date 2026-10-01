@@ -40,25 +40,30 @@ logging.basicConfig(
 logger = logging.getLogger("assistive_app")
 apply_offline_env(cfg.data["app"]["offline_mode"])  # before any model library is imported
 
-# ── Railway / cloud environment overrides ─────────────────────────────────────
+# ── Environment detection ──────────────────────────────────────────────────────
 IS_CLOUD = bool(
     os.environ.get("RAILWAY_ENVIRONMENT")
     or os.environ.get("RAILWAY_PROJECT_ID")
     or os.environ.get("ENVIRONMENT", "").lower() == "railway"
 )
+IS_JETSON = bool(
+    os.environ.get("SVA_JETSON")
+    or os.path.exists("/etc/nv_tegra_release")   # Jetson-specific file
+)
+
 if IS_CLOUD:
-    # No physical camera on Railway — browser sends frames via /api/process-frame
-    # No Windows SAPI — use eSpeak (installed via apt-get)
-    # No EasyOCR/PaddleOCR models — use Tesseract (system binary, instant)
-    logger.info("Railway environment detected — applying cloud config overrides")
+    # Railway: no physical camera, no Windows TTS, no GPU — use tesseract + espeak
+    logger.info("Railway cloud environment detected — applying lightweight config overrides")
     ocr = cfg.data["ocr"]
     ocr["engine"] = "tesseract"
     ocr["fallback_order"] = ["tesseract"]
     ocr["serialize_engines"] = False
     ocr["preload"] = "primary"
     ocr["capture_interval"] = 0.5
-    ocr["min_confidence"] = 0.20
-    ocr["min_text_len"] = 2
+    ocr["min_confidence"] = 0.50
+    ocr["min_text_len"] = 3
+    ocr["accept_score"] = 0.70
+    ocr["min_final_score"] = 0.50
     ocr["latency_budget_s"] = 8.0
     ocr["engines"]["tesseract"]["timeout_s"] = 8.0
     ocr["engines"]["easyocr"]["enabled"] = False
@@ -67,6 +72,30 @@ if IS_CLOUD:
     ocr["duplicates"]["cooldown_s"] = 5.0
     cfg.data["tts"]["engine"] = "espeak"
     cfg.data["tts"]["fallback_engines"] = ["espeak"]
+
+elif IS_JETSON:
+    # Jetson Orin Nano: GPU available → EasyOCR+CUDA, Coqui neural TTS
+    logger.info("NVIDIA Jetson environment detected — applying GPU-accelerated config overrides")
+    ocr = cfg.data["ocr"]
+    ocr["engine"] = "easyocr"
+    ocr["fallback_order"] = ["easyocr", "tesseract"]
+    ocr["serialize_engines"] = False
+    ocr["preload"] = "primary"
+    ocr["capture_interval"] = 0.5
+    ocr["min_confidence"] = 0.50
+    ocr["min_text_len"] = 3
+    ocr["accept_score"] = 0.70
+    ocr["min_final_score"] = 0.50
+    ocr["latency_budget_s"] = 6.0
+    ocr["engines"]["easyocr"]["enabled"] = True
+    ocr["engines"]["easyocr"]["gpu"] = True      # CUDA via Jetson PyTorch wheel
+    ocr["engines"]["easyocr"]["timeout_s"] = 6.0
+    ocr["engines"]["paddle"]["enabled"] = False   # save RAM; easyocr+GPU is sufficient
+    ocr["engines"]["trocr"]["enabled"] = False
+    ocr["duplicates"]["cooldown_s"] = 5.0
+    cfg.data["tts"]["engine"] = "coqui"
+    cfg.data["tts"]["fallback_engines"] = ["coqui", "espeak"]
+    cfg.data["app"]["offline_mode"] = True        # guarantee no phone-home
 # ──────────────────────────────────────────────────────────────────────────────
 
 from core.frame.processing import FrameError  # noqa: E402

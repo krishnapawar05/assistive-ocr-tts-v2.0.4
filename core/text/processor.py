@@ -17,6 +17,14 @@ def _is_word_char(ch: str) -> bool:
     return unicodedata.category(ch)[0] in ("L", "N", "M")
 
 
+_COMMON_SHORT_WORDS = {
+    "a", "i", "am", "an", "as", "at", "be", "by", "do", "go", "he", "hi",
+    "if", "in", "is", "it", "me", "my", "no", "of", "on", "or", "so", "to",
+    "up", "us", "we", "ok", "tv", "pc", "id", "pm", "am", "dr", "mr", "ms",
+    "st", "nd", "rd", "th", "re", "ex"
+}
+
+
 class TextProcessor:
     def __init__(self, text_cfg: Dict[str, Any], min_text_len: int):
         self.cfg = text_cfg
@@ -36,9 +44,9 @@ class TextProcessor:
         text = "".join(ch for ch in text if ch.isspace() or unicodedata.category(ch)[0] != "C")
         text = _WS.sub(" ", text).strip()
         text = self._symbol_run.sub(lambda m: m.group(1) * self.max_symbol_run, text)
-        # Remove tokens that consist only of disallowed symbols (e.g. "|", "~~", "«»").
-        tokens = [t for t in text.split(" ")
-                  if any(_is_word_char(c) for c in t) or all(c in self.allowed_punct for c in t)]
+        # Remove tokens that contain NO word characters (e.g. standalone "|", "~~", "«»", "!", "-", "°").
+        # Punctuation must be attached to words, not floating as isolated tokens.
+        tokens = [t for t in text.split(" ") if any(_is_word_char(c) for c in t)]
         text = " ".join(tokens)
         return text.strip(self.edge_strip)
 
@@ -76,6 +84,41 @@ class TextProcessor:
             return False, "no_letters_or_digits"
         if self.validity(text) < self.min_validity:
             return False, "low_validity"
+
+        # Check token plausibility to reject hallucinated noise (e.g. '2 oe. oo A')
+        raw_tokens = text.split()
+        tokens = [re.sub(r"^[^\w]+|[^\w]+$", "", t) for t in raw_tokens]
+        tokens = [t for t in tokens if t]
+        if not tokens:
+            return False, "no_letters_or_digits"
+
+        meaningful_words = 0
+        meaningful_numbers = 0
+        valid_short_words = 0
+        fragment_count = 0
+
+        for t in tokens:
+            has_letters = any(unicodedata.category(c)[0] in ("L", "M") for c in t)
+            if has_letters:
+                if len(t) >= 3:
+                    meaningful_words += 1
+                elif t.lower() in _COMMON_SHORT_WORDS:
+                    valid_short_words += 1
+                else:
+                    fragment_count += 1
+            elif t.isdigit():
+                if len(t) >= 2:
+                    meaningful_numbers += 1
+                else:
+                    # Single digit
+                    pass
+
+        # Valid text must have at least one word of length >= 3, or a multi-digit number,
+        # or be a valid short word without dominating garbage fragments.
+        if meaningful_words == 0 and meaningful_numbers == 0:
+            if valid_short_words == 0 or fragment_count > 0:
+                return False, "gibberish_fragments"
+
         return True, "ok"
 
 

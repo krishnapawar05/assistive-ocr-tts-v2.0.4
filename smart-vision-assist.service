@@ -1,0 +1,24 @@
+[Unit]
+Description=Smart Vision Assist — Offline OCR+TTS Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# ── Change these two paths to match your Jetson username and repo location ──
+User=jetson
+WorkingDirectory=/home/jetson/assistive-ocr-tts-v2.0.4
+ExecStart=/home/jetson/assistive-ocr-tts-v2.0.4/.venv/bin/python app.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=smart-vision-assist
+
+# Offline mode — no network needed after boot
+Environment=PYTHONUNBUFFERED=1
+Environment=SVA_JETSON=1
+
+[Install]
+WantedBy=multi-user.target

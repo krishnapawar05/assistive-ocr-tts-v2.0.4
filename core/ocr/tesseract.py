@@ -59,6 +59,7 @@ class TesseractOCRAdapter(OCRAdapter):
         config = f"--oem {int(self.cfg['oem'])} --psm {int(self.cfg['psm'])}"
         data = pt.image_to_data(image, lang=self._lang, config=config, output_type=pt.Output.DICT,
                                 timeout=float(self.cfg["timeout_s"]))
+        min_word_conf = float(self.cfg.get("min_word_conf", 40.0))
         lines = {}
         confs: List[float] = []
         boxes: List[BBox] = []
@@ -67,11 +68,21 @@ class TesseractOCRAdapter(OCRAdapter):
             conf = float(data["conf"][i])
             if not word or conf < 0:  # conf -1 marks non-word layout rows
                 continue
+            # Filter low-confidence words (background noise, false detections on walls/faces)
+            if conf < min_word_conf:
+                continue
+            # For 1-character words (except common letters 'a','i','A','I' and single digits in context),
+            # require higher confidence to avoid hallucinated noise symbols like '°', '~', '|'
+            if len(word) == 1:
+                if word.lower() not in ("a", "i") and not word.isdigit() and conf < 65.0:
+                    continue
+                if conf < 50.0:
+                    continue
             key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
             lines.setdefault(key, []).append(word)
             confs.append(conf / 100.0)
             boxes.append((int(data["left"][i]), int(data["top"][i]), int(data["width"][i]), int(data["height"][i])))
-        text = "\n".join(" ".join(words) for _, words in sorted(lines.items()))
+        text = "\n".join(" ".join(words) for _, words in sorted(lines.items()) if words)
         confidence = float(np.mean(confs)) if confs else 0.0
         logger.debug("tesseract: %d words, conf=%.2f", len(confs), confidence)
         return OCRResult(text=text, confidence=confidence, bounding_boxes=boxes,
