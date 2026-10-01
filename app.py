@@ -184,7 +184,6 @@ async def dashboard(request: Request):
         "config": cfg.data, "voices": p.voices(), "assets": ASSET_VERSIONS,
         "unusable_ocr": unusable, "is_cloud": IS_CLOUD})
 
-
 @app.post("/api/process-frame")
 async def api_process_frame(request: Request):
     """Process an image frame submitted by the client (browser camera mode).
